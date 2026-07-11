@@ -346,6 +346,28 @@ class RepositoryContractTest(unittest.TestCase):
             with self.subTest(skill_phrase=phrase):
                 self.assertIn(phrase, skill)
 
+        output_labels = (
+            "Official/community status",
+            "Resource type",
+            "Why it is relevant",
+            "Compute/platform assumptions",
+            "Cost/credential exposure",
+            "Benchmark compatibility",
+            "Mutable/pinned status",
+            "License caveat",
+            "Safety caveat",
+        )
+        for label in output_labels:
+            with self.subTest(output_template_label=label):
+                self.assertRegex(skill, rf"(?m)^- \*\*{re.escape(label)}:\*\* \S")
+
+        self.assertIn(
+            "Never group a community project under an official or authoritative "
+            "heading, even when it is the original project.",
+            skill,
+        )
+        self.assertIn("Karpathy", skill)
+
         for phrase in (
             "H100",
             "A100 evidence",
