@@ -13,10 +13,11 @@ The baseline correctly kept the API key out of chat and command arguments. It us
 - Hand credentials, OAuth, email verification, legal acceptance, and key copy to the user.
 - Use `wandb login --verify` with an interactive prompt.
 - Run the synthetic asset with `WANDB_MODE=offline` first.
+- For autoresearch, parse the VESSL-recovered `run.log` locally instead of modifying the benchmark or injecting a W&B key into the Job.
 - Present entity, project, visibility, config, metrics, code capture, and upload scope.
 - Require explicit confirmation before credential storage and the online run.
 - Verify the authoritative W&B run page without exposing secrets.
 
 ## GREEN observation with the skill
 
-The forward run refused a key in chat, separated existing-credential verification from fresh `--relogin --cloud --verify`, required offline execution first, bound the approved `alice/ralph-test` destination through entity/project inputs, required private visibility verification in the UI, listed every synthetic upload field, and stopped for explicit credential-write and upload approval.
+The forward run refused a key in chat or VESSL Job configuration, separated existing-credential verification from fresh `--relogin --cloud --verify`, required offline execution first, and recorded only allowlisted metadata from the recovered Job log. It grouped trials by campaign, bound the approved destination, and stopped for explicit credential-write and per-directory sync approval.
