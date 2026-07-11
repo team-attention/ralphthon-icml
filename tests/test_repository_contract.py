@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import shutil
-import subprocess
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from pathlib import Path
+from typing import Mapping
 from unittest import mock
 
 
@@ -20,6 +22,17 @@ EXPECTED_SKILLS = {
     "vessl-cloud-onboarding",
     "world-model-ideation",
 }
+VESSL_AUTORESEARCH_URL = (
+    "https://github.com/vessl-ai/vessl-cloud-cookbook/tree/main/autoresearch"
+)
+VESSL_COOKBOOK_SHA = "97a0af14b0acae042162b1f70f17fbe2d570afa2"
+KARPATHY_SHA = "228791fb499afffb54b46200aca536f79142f117"
+GIT_SHA = "1" * 40
+SECOND_GIT_SHA = "2" * 40
+
+
+def sha256_marker(character: str) -> str:
+    return "sha256:" + character * 64
 
 
 def load_validator():
@@ -40,24 +53,56 @@ def load_recorder():
     return module
 
 
-def complete_a100_summary(**overrides: object) -> dict[str, object]:
+def cookbook_summary(**overrides: object) -> dict[str, object]:
     summary: dict[str, object] = {
         "val_bpb": 1.2345,
-        "peak_vram_mb": 2048.0,
-        "training_seconds": 120.1,
-        "total_seconds": 141.2,
-        "parameters": 786_468,
-        "depth": 2,
-        "vocab_size": 1024,
-        "max_seq_len": 256,
-        "device_batch_size": 64,
-        "total_batch_size": 2**14,
-        "eval_tokens": 2**18,
-        "time_budget": 120,
-        "window_pattern": "L",
+        "peak_vram_mb": 26_432.0,
+        "training_seconds": 300.1,
+        "total_seconds": 330.2,
+        "num_params_M": 50.3,
     }
     summary.update(overrides)
     return summary
+
+
+def recorder_correlation(**overrides: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "cookbook_sha": VESSL_COOKBOOK_SHA,
+        "vessl_job_slug": "autoresearch-baseline-abc123",
+        "vessl_job_name": "autoresearch-campaign-42-1111111",
+        "vessl_job_state": "succeeded",
+        "approved_resource_spec": "resourcespec-live-a100-1",
+        "job_resource_spec": "resourcespec-live-a100-1",
+        "gpu_identity": "NVIDIA A100-SXM4-80GB",
+        "gpu_count": 1,
+        "branch": "autoresearch/campaign-42",
+        "cache_fingerprint": sha256_marker("a"),
+        "evaluation_fingerprint": sha256_marker("b"),
+        "train_py_sha256": sha256_marker("c"),
+        "log_sha256": sha256_marker("d"),
+        "job_json_sha256": sha256_marker("e"),
+    }
+    values.update(overrides)
+    return values
+
+
+def recorder_record_inputs(**overrides: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "run_tag": "campaign-42",
+        "trial": "baseline",
+        "git_sha": GIT_SHA,
+        "remote_commit": GIT_SHA,
+        "hypothesis": "frozen official baseline",
+        "change": "none",
+        "status": "keep",
+        "failure": None,
+        "next_hint": "try one candidate",
+        "summary": cookbook_summary(),
+        "wandb_run": "offline-run-id",
+        **recorder_correlation(),
+    }
+    values.update(overrides)
+    return values
 
 
 class RepositoryContractTest(unittest.TestCase):
@@ -112,9 +157,87 @@ class RepositoryContractTest(unittest.TestCase):
 
         self.assertTrue(any("integrate behavior into skills" in message for message in messages))
 
+    def test_validator_rejects_broken_local_links_and_agent_metadata(self) -> None:
+        validator = load_validator()
+        if not hasattr(validator, "validate_repository"):
+            self.fail("validator must expose validate_repository")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "plugin"
+            shutil.copytree(ROOT, root, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+            linked_asset = (
+                root
+                / "skills"
+                / "auto-research"
+                / "assets"
+                / "track-1-submission-template.md"
+            )
+            linked_asset.unlink()
+            metadata = root / "skills" / "auto-research" / "agents" / "openai.yaml"
+            metadata.write_text(
+                "\n".join(
+                    (
+                        "interface:",
+                        '  display_name: "Auto Research"',
+                        '  short_description: ""',
+                        '  # default_prompt: "commented fields do not count"',
+                    )
+                )
+            )
+
+            messages = [error.message for error in validator.validate_repository(root)]
+
+        self.assertTrue(any("local Markdown link" in message for message in messages))
+        self.assertTrue(any("default_prompt" in message for message in messages))
+        self.assertTrue(any("short_description" in message for message in messages))
+
+    def test_validator_rejects_nested_or_yaml_empty_agent_metadata(self) -> None:
+        validator = load_validator()
+        cases = {
+            "nested": (
+                "interface:",
+                "  nested:",
+                '    display_name: "Auto Research"',
+                '    short_description: "Nested incorrectly"',
+                '    default_prompt: "Nested incorrectly"',
+            ),
+            "yaml-empty": (
+                "interface:",
+                '  display_name: "Auto Research"',
+                '  short_description: "" # empty quoted scalar',
+                "  default_prompt: null",
+            ),
+        }
+
+        for case_name, lines in cases.items():
+            with self.subTest(case=case_name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / "plugin"
+                shutil.copytree(
+                    ROOT,
+                    root,
+                    ignore=shutil.ignore_patterns(".git", "__pycache__"),
+                )
+                metadata = root / "skills" / "auto-research" / "agents" / "openai.yaml"
+                metadata.write_text("\n".join(lines))
+
+                messages = [
+                    error.message for error in validator.validate_repository(root)
+                ]
+
+                if case_name == "nested":
+                    self.assertTrue(
+                        any("display_name" in message for message in messages)
+                    )
+                self.assertTrue(any("default_prompt" in message for message in messages))
+                self.assertTrue(
+                    any("short_description" in message for message in messages)
+                )
+
     def test_manifest_advertises_full_workflow(self) -> None:
         manifest = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text())
-        searchable = " ".join(manifest["keywords"] + manifest["interface"]["defaultPrompt"]).lower()
+        default_prompt = manifest["interface"]["defaultPrompt"]
+        prompt_parts = default_prompt if isinstance(default_prompt, list) else [default_prompt]
+        searchable = " ".join(manifest["keywords"] + prompt_parts).lower()
 
         for phrase in ("auto-research", "wandb", "vessl", "world-model"):
             with self.subTest(phrase=phrase):
@@ -141,44 +264,35 @@ class RepositoryContractTest(unittest.TestCase):
         hello_skill = (ROOT / "skills/hello-ralphthon-icml/SKILL.md").read_text()
         self.assertNotIn("world-model sponsor narrative", hello_skill)
 
-    def test_a100_micro_integration_docs_and_metadata(self) -> None:
+    def test_official_cookbook_integration_docs_and_metadata(self) -> None:
         manifest = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text())
-        self.assertEqual(manifest["version"], "0.4.0")
+        self.assertEqual(manifest["version"], "0.5.0")
         manifest_text = json.dumps(manifest, ensure_ascii=False)
-        for phrase in ("A100-micro-v1", "Karpathy", "W&B", "VESSL"):
+        for phrase in ("VESSL Cloud Cookbook", "A100", "W&B", "autoresearch"):
             with self.subTest(manifest_phrase=phrase):
                 self.assertIn(phrase, manifest_text)
 
         readme = (ROOT / "README.md").read_text()
         for phrase in (
-            "A100-micro-v1",
-            "786,468",
-            "karpathy/autoresearch",
-            "record_experiment.py",
-            "Training path",
-            "Track 2-only",
+            VESSL_AUTORESEARCH_URL,
+            VESSL_COOKBOOK_SHA,
             "single A100",
             "W&B offline",
-            "live cost",
+            "participant-owned fork",
+            "unchanged benchmark",
         ):
             with self.subTest(readme_phrase=phrase):
                 self.assertIn(phrase, readme)
 
         ui = (ROOT / "skills/auto-research/agents/openai.yaml").read_text()
-        for phrase in ("A100-micro-v1", "W&B", "VESSL"):
+        for phrase in ("VESSL Cloud Cookbook", "A100", "W&B"):
             with self.subTest(ui_phrase=phrase):
                 self.assertIn(phrase, ui)
 
-        self.assertFalse((ROOT / "docs" / "superpowers").exists())
-        bundle = (ROOT / "skills/auto-research/SKILL.md").read_text()
-        for phrase in (
-            "A100-micro-v1",
-            "786,468",
-            "228791fb499afffb54b46200aca536f79142f117",
-            "record_experiment.py",
-        ):
-            with self.subTest(skill_phrase=phrase):
-                self.assertIn(phrase, bundle)
+        public_bundle = "\n".join((manifest_text, readme, ui))
+        for stale in ("A100-micro-v1", "786,468", "TIME_BUDGET=120"):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, public_bundle)
 
     def test_each_skill_contains_integrated_execution_contract(self) -> None:
         for skill_name in EXPECTED_SKILLS:
@@ -266,442 +380,447 @@ class SkillBehaviorContractTest(unittest.TestCase):
             with self.subTest(general_track_1=name):
                 self.assertIn("General Track 1 path", document)
                 self.assertIn("does not automatically require W&B, VESSL, or A100", document)
-        self.assertIn("review-agent.md", text)
-        self.assertIn("Track 2 Review Agent", text)
 
-        skill_training = text.split("### Training path", 1)[1].split(
-            "### General Track 1 path", 1
-        )[0]
-        self.assertIn("For Both", skill_training)
-        self.assertIn("review-agent.md", skill_training)
-        self.assertIn("track-2-agent-template.md", skill_training)
-        self.assertIn("track-2-review-template.md", skill_training)
-
-        output_contract = text.split("## Output", 1)[1].split("## Next Steps", 1)[0]
-        for phrase in (
-            "exact experiment count",
-            "best confirmed `val_bpb`",
-            "artifact paths",
-        ):
-            with self.subTest(training_output=phrase):
-                self.assertIn(phrase, output_contract)
-
-    def test_auto_research_encodes_pinned_a100_micro_runtime(self) -> None:
+    def test_official_vessl_cookbook_is_the_execution_sot(self) -> None:
         text = self.read_auto_research_bundle()
 
         for phrase in (
-            "228791fb499afffb54b46200aca536f79142f117",
-            "A100-micro-v1",
-            "wandb-onboarding",
-            "vessl-cloud-onboarding",
-            "resource-spec list --usable-only",
-            "nvidia-smi",
-            "DEPTH=2",
-            "ASPECT_RATIO=64",
-            "HEAD_DIM=128",
-            'WINDOW_PATTERN="L"',
-            "VOCAB_SIZE=1024",
-            "MAX_SEQ_LEN=256",
-            "DEVICE_BATCH_SIZE=64",
-            "TOTAL_BATCH_SIZE=2**14",
-            "EVAL_TOKENS=2**18",
-            "TIME_BUDGET=120",
-            "evaluation steps: 16",
-            "786,468",
-            "prepare.py --num-shards 1",
-            "isolated cache",
+            VESSL_AUTORESEARCH_URL,
+            VESSL_COOKBOOK_SHA,
+            KARPATHY_SHA,
+            "execution SOT",
+            "batch-job/prep.sh",
+            "batch-job/submit.sh",
+            "batch-job/submit-async.sh",
+            "batch-job/wait-jobs.sh",
+            "AUTORESEARCH_CACHE_VOLUME",
+            "AUTORESEARCH_RESOURCE_SPEC",
+            "AUTORESEARCH_IMAGE",
+            "AUTORESEARCH_REPO_URL",
+            "AUTORESEARCH_TIMEOUT_S",
+            "vesslctl job create",
+            "vesslctl job show",
+            "vesslctl job logs",
+            "object volume",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
 
-        layers = 2
-        width = 128
-        heads = 1
-        vocab = 1024
-        value_embedding_layers = (layers + 1) // 2
-        parameter_count = (
-            (2 + value_embedding_layers) * vocab * width
-            + 12 * layers * width**2
-            + value_embedding_layers * 32 * heads
-            + 2 * layers
-        )
-        tokens_per_step = 64 * 256
+        for stale in (
+            "A100-micro-v1",
+            "DEPTH=2",
+            "TIME_BUDGET=120",
+            "786,468",
+            "prepare.py --num-shards 1",
+        ):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, text)
 
-        self.assertEqual(parameter_count, 786_468)
-        self.assertEqual(2**14 % tokens_per_step, 0)
-        self.assertEqual((2**18) // tokens_per_step, 16)
-
-    def test_auto_research_binds_cost_secret_and_experiment_gates(self) -> None:
+    def test_official_benchmark_is_not_reimplemented_or_changed(self) -> None:
         text = self.read_auto_research_bundle()
 
         for phrase in (
-            "explicit confirmation",
+            "unchanged benchmark",
+            "byte-for-byte",
+            "prepare.py",
+            "pyproject.toml",
+            "uv.lock",
+            "evaluation",
+            "benchmark defaults",
+            "only `train.py`",
+            "one hypothesis",
+            "one change",
+            "A100 results",
+            "H100 results",
+            "not directly comparable",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+        safety_sentence = (
+            "**DO NOT USE** `git reset --hard`, `git add -A`, "
+            "`LOOP FOREVER`, or `NEVER STOP`"
+        )
+        skill = self.read_skill("auto-research")
+        runbook = (
+            ROOT
+            / "skills"
+            / "auto-research"
+            / "references"
+            / "vessl-autoresearch-runbook.md"
+        ).read_text()
+        self.assertIn(safety_sentence, skill)
+        self.assertIn(safety_sentence, runbook)
+
+        # This plugin supplies orchestration and evidence templates, not a forked
+        # benchmark.  The executable benchmark remains in the pinned cookbook.
+        skill_root = ROOT / "skills" / "auto-research"
+        for benchmark_file in (
+            "prepare.py",
+            "train.py",
+            "pyproject.toml",
+            "uv.lock",
+            "benchmarks.md",
+            "results.example.tsv",
+            "analysis.ipynb",
+        ):
+            with self.subTest(not_vendored=benchmark_file):
+                self.assertFalse(any(skill_root.rglob(benchmark_file)))
+
+    def test_a100_gate_cost_fork_and_bounded_loop_fail_closed(self) -> None:
+        text = self.read_auto_research_bundle()
+
+        for phrase in (
+            "resource-spec list --usable-only -o json",
+            "single A100",
+            "exact live resource spec",
+            "Do not fall back",
             "hourly price",
             "credit",
             "storage",
-            "cleanup",
-            "Do not fall back",
+            "estimated cost",
+            "explicit confirmation",
+            "participant-owned fork",
+            "writable",
+            "git remote get-url origin",
+            "git ls-remote",
+            "cloud-clonable",
+            "Push that unchanged pinned branch",
+            "full remote SHA",
             "baseline",
-            "three candidate trials",
+            "at most three candidate",
             "winner confirmation",
-            "one hypothesis",
-            "one change",
-            "train.py",
+            "sequential",
+            "APPROVED_A100_RESOURCE_SPEC",
+            "prep.sh` has no `AUTORESEARCH_TIMEOUT_S",
+            "read-only CPU verification Job",
+            "autoresearch/<run-tag>-confirm",
+            "Require a new Job name and slug",
+            "local polling timeout",
+            "does not terminate",
+            "vesslctl job terminate",
+            "confirmed terminal state",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+        self.assertNotIn("fall back to H100", text)
+        self.assertNotIn("parallel fanout", text)
+
+    def test_auto_research_binds_secret_and_wandb_postprocessing_gates(self) -> None:
+        text = self.read_auto_research_bundle()
+
+        for phrase in (
+            "wandb-onboarding",
+            "vessl-cloud-onboarding",
+            "WANDB_MODE=offline",
+            "vesslctl job logs",
+            "local post-processing",
+            "entity",
+            "project",
+            "visibility",
+            "upload allowlist",
+            "explicit confirmation",
+            "wandb sync --entity",
             "experiments.jsonl",
-            "dataset fingerprint",
-            "tokenizer fingerprint",
-            "W&B allowlist",
-            "MFU",
             "val_bpb",
+            "W&B Launch",
+            "W&B Sweeps",
+            "sanitized host",
+            "SDK telemetry records",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
 
         for forbidden in (
-            "git reset --hard",
-            "git add -A",
             "wandb login $WANDB_API_KEY",
+            "WANDB_API_KEY=",
+            "put the W&B API key in VESSL",
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, text)
 
-    def test_auto_research_recorder_parses_and_appends_allowlisted_evidence(self) -> None:
+    def test_auto_research_recorder_correlates_vessl_and_wandb_evidence(self) -> None:
         path = ROOT / "skills" / "auto-research" / "scripts" / "record_experiment.py"
         self.assertTrue(path.is_file())
         if not path.is_file():
             return
 
         module = load_recorder()
-
         summary = module.parse_training_summary(
             "\n".join(
                 (
                     "val_bpb:          1.234500",
-                    "training_seconds: 120.1",
-                    "total_seconds:    141.2",
-                    "peak_vram_mb:     2048.0",
-                    "num_params_M:     0.8",
-                    "parameters:       786468",
-                    "depth:            2",
-                    "vocab_size:       1024",
-                    "max_seq_len:      256",
-                    "device_batch_size: 64",
-                    "total_batch_size: 16384",
-                    "eval_tokens:      262144",
-                    "time_budget:      120",
-                    "window_pattern:   L",
+                    "training_seconds: 300.1",
+                    "total_seconds:    330.2",
+                    "peak_vram_mb:     26432.0",
+                    "num_params_M:     50.3",
                 )
             )
         )
         self.assertEqual(summary["val_bpb"], 1.2345)
-        self.assertEqual(summary["peak_vram_mb"], 2048.0)
-        self.assertEqual(summary["depth"], 2)
+        self.assertEqual(summary["num_params_M"], 50.3)
 
+        correlation = recorder_correlation()
+        required_parameters = set(correlation)
+        actual_parameters = set(inspect.signature(module.build_record).parameters)
+        self.assertTrue(
+            required_parameters <= actual_parameters,
+            f"build_record missing correlation parameters: "
+            f"{sorted(required_parameters - actual_parameters)}",
+        )
+        if not required_parameters <= actual_parameters:
+            return
         record = module.build_record(
-            run_tag="campaign-42",
-            trial="candidate-1",
-            git_sha="abc1234",
-            hypothesis="smaller warmdown improves BPB",
-            change="WARMDOWN_RATIO only",
-            status="keep",
-            failure=None,
-            next_hint="confirm unchanged",
-            summary=summary,
-            wandb_run="offline-run-id",
+            **recorder_record_inputs(summary=summary, **correlation)
         )
-        self.assertEqual(
-            set(record),
-            {
-                "trial",
-                "run_tag",
-                "git_sha",
-                "hypothesis",
-                "change",
-                "val_bpb",
-                "peak_vram_mb",
-                "parameters",
-                "elapsed_seconds",
-                "status",
-                "failure",
-                "next_hint",
-                "wandb_run",
-            },
-        )
-        self.assertEqual(record["parameters"], 786_468)
+        for field, expected in correlation.items():
+            with self.subTest(field=field):
+                self.assertEqual(record[field], expected)
+        self.assertEqual(record["val_bpb"], 1.2345)
 
         with tempfile.TemporaryDirectory() as directory:
             ledger = Path(directory) / "experiments.jsonl"
             module.append_record(ledger, record)
             self.assertEqual(json.loads(ledger.read_text()), record)
 
-        source = path.read_text()
-        self.assertIn('mode="offline"', source)
-        self.assertNotIn("--api-key", source)
-        self.assertNotIn("mode=\"online\"", source)
-
-    def test_auto_research_recorder_rejects_incomplete_or_malformed_evidence(self) -> None:
-        module = load_recorder()
-        complete = complete_a100_summary()
-        common = {
-            "run_tag": "campaign-42",
-            "trial": "candidate-1",
-            "git_sha": "abc1234",
-            "hypothesis": "one testable hypothesis",
-            "change": "one train.py change",
-            "failure": None,
-            "next_hint": None,
-            "wandb_run": "offline-run-id",
+        actions = {
+            option
+            for action in module.build_parser()._actions
+            for option in action.option_strings
         }
-
-        for status in ("keep", "discard", "confirmation"):
-            for missing in ("val_bpb", "peak_vram_mb", "total_seconds", "parameters"):
-                summary = dict(complete)
-                summary.pop(missing)
-                with self.subTest(status=status, missing=missing):
-                    with self.assertRaises(ValueError):
-                        module.build_record(status=status, summary=summary, **common)
-
-        with self.assertRaises(ValueError):
-            module.build_record(
-                status="keep",
-                summary={**complete, "parameters": 786_467},
-                **common,
-            )
-        with self.assertRaises(ValueError):
-            module.build_record(status="crash", summary={}, **common)
-        with self.assertRaises(ValueError):
-            module.build_record(
-                status="crash",
-                summary={},
-                **{**common, "failure": "   "},
-            )
-        with self.assertRaises(ValueError):
-            module.build_record(
-                status="keep",
-                summary=complete,
-                **{**common, "run_tag": ""},
-            )
-        crash = module.build_record(
-            status="crash",
-            summary={},
-            **{**common, "failure": "CUDA kernel incompatibility"},
-        )
-        self.assertEqual(crash["failure"], "CUDA kernel incompatibility")
-        self.assertIsNone(crash["val_bpb"])
-        valid = module.build_record(status="keep", summary=complete, **common)
-        with tempfile.TemporaryDirectory() as directory:
-            ledger = Path(directory) / "experiments.jsonl"
-            with self.assertRaises(ValueError):
-                module.append_record(ledger, {**valid, "run_tag": 42})
-            with self.assertRaises(ValueError):
-                module.append_record(ledger, {**valid, "parameters": 786_468.0})
-        with self.assertRaises(ValueError):
-            module.parse_training_summary("val_bpb: not-a-number")
-
-    def test_auto_research_recorder_rejects_preset_and_duration_drift(self) -> None:
-        module = load_recorder()
-        expected = complete_a100_summary()
-        common = {
-            "run_tag": "campaign-42",
-            "trial": "candidate-1",
-            "git_sha": "abc1234",
-            "hypothesis": "one testable hypothesis",
-            "change": "one train.py change",
-            "status": "keep",
-            "failure": None,
-            "next_hint": None,
-            "wandb_run": "offline-candidate-1",
-        }
-
-        valid = module.build_record(summary=expected, **common)
-        self.assertEqual(valid["parameters"], 786_468)
-
-        drift_cases = {
-            "depth": 3,
-            "vocab_size": 2048,
-            "max_seq_len": 512,
-            "device_batch_size": 32,
-            "total_batch_size": 2**15,
-            "eval_tokens": 2**19,
-            "time_budget": 300,
-            "window_pattern": "SSSL",
-            "training_seconds": 119.9,
-            "total_seconds": 240.1,
-        }
-        for field, value in drift_cases.items():
-            with self.subTest(field=field, value=value):
-                with self.assertRaises(ValueError):
-                    module.build_record(summary={**expected, field: value}, **common)
-
-        parsed = module.parse_training_summary(
-            "\n".join(
-                (
-                    "window_pattern: L",
-                    "vocab_size: 1024",
-                    "max_seq_len: 256",
-                    "device_batch_size: 64",
-                    "total_batch_size: 16384",
-                    "eval_tokens: 262144",
-                    "time_budget: 120",
-                )
-            )
-        )
-        self.assertEqual(parsed.get("window_pattern"), "L")
-        self.assertEqual(parsed.get("eval_tokens"), 2**18)
-
-    def test_auto_research_recorder_enforces_campaign_sequence(self) -> None:
-        module = load_recorder()
-        complete = complete_a100_summary()
-
-        def record(
-            trial: str,
-            status: str,
-            *,
-            run_tag: str = "campaign-42",
-        ) -> dict[str, object]:
-            return module.build_record(
-                run_tag=run_tag,
-                trial=trial,
-                git_sha="abc1234",
-                hypothesis="one testable hypothesis",
-                change="one train.py change",
-                status=status,
-                failure="training command failed" if status == "crash" else None,
-                next_hint=None,
-                summary={} if status == "crash" else complete,
-                wandb_run=f"offline-{trial}",
-            )
-
-        for run_tag in ("Campaign_42", "campaign_42", "-campaign", "campaign-", "a/b"):
-            with self.subTest(invalid_run_tag=run_tag):
-                with self.assertRaises(ValueError):
-                    record("candidate-1", "keep", run_tag=run_tag)
-
-        normalized = module.build_record(
-            run_tag="  campaign-42  ",
-            trial="  candidate-1  ",
-            git_sha="abc1234",
-            hypothesis="one testable hypothesis",
-            change="one train.py change",
-            status="keep",
-            failure=None,
-            next_hint=None,
-            summary=complete,
-            wandb_run="offline-candidate-1",
-        )
-        self.assertEqual(normalized["run_tag"], "campaign-42")
-        self.assertEqual(normalized["trial"], "candidate-1")
-
-        for trial, status in (
-            ("baseline", "discard"),
-            ("baseline", "confirmation"),
-            ("candidate-1", "confirmation"),
-            ("winner-confirmation", "keep"),
-            ("winner-confirmation", "discard"),
-            ("candidate-4", "keep"),
+        for flag in (
+            "--cookbook-sha",
+            "--vessl-job-slug",
+            "--vessl-job-name",
+            "--vessl-job-state",
+            "--approved-resource-spec",
+            "--job-resource-spec",
+            "--gpu-identity",
+            "--gpu-count",
+            "--branch",
+            "--cache-fingerprint",
+            "--evaluation-file",
+            "--train-py",
+            "--job-json",
+            "--git-sha",
+            "--remote-commit",
         ):
-            with self.subTest(trial=trial, invalid_status=status):
-                with self.assertRaises(ValueError):
-                    record(trial, status)
+            with self.subTest(flag=flag):
+                self.assertIn(flag, actions)
 
+    def test_auto_research_recorder_rejects_untrusted_or_unbounded_evidence(self) -> None:
+        module = load_recorder()
+        base = recorder_record_inputs()
+
+        with self.assertRaisesRegex(ValueError, "execution SOT pin"):
+            module.build_record(**{**base, "cookbook_sha": "0" * 40})
+        with self.assertRaisesRegex(ValueError, "normalized NVIDIA A100"):
+            module.build_record(**{**base, "gpu_identity": "NVIDIA H100 80GB"})
+        for invalid_gpu in (
+            "8x NVIDIA A100",
+            "NVIDIA A100 H100",
+            "A100 not an A100",
+            "A100 x8",
+        ):
+            with self.subTest(invalid_gpu=invalid_gpu):
+                with self.assertRaisesRegex(ValueError, "normalized NVIDIA A100"):
+                    module.build_record(**{**base, "gpu_identity": invalid_gpu})
+        with self.assertRaisesRegex(ValueError, "exactly 1"):
+            module.build_record(**{**base, "gpu_count": 8})
+        with self.assertRaisesRegex(ValueError, "must be terminal"):
+            module.build_record(**{**base, "vessl_job_state": "running"})
+        with self.assertRaisesRegex(ValueError, "must equal approved"):
+            module.build_record(
+                **{**base, "job_resource_spec": "resourcespec-other-a100"}
+            )
+        with self.assertRaisesRegex(ValueError, "must not identify H100"):
+            module.build_record(
+                **{
+                    **base,
+                    "approved_resource_spec": "resourcespec-h100-1",
+                    "job_resource_spec": "resourcespec-h100-1",
+                }
+            )
+        with self.assertRaisesRegex(ValueError, "full lowercase 40-hex"):
+            module.build_record(**{**base, "remote_commit": "abc1234"})
+        with self.assertRaisesRegex(ValueError, "sha256:<64 lowercase hex>"):
+            module.build_record(**{**base, "cache_fingerprint": "placeholder"})
+        with self.assertRaisesRegex(ValueError, "finite number"):
+            module.build_record(
+                **{**base, "summary": cookbook_summary(val_bpb=float("nan"))}
+            )
+        with self.assertRaisesRegex(ValueError, "greater than zero"):
+            module.build_record(**{**base, "summary": cookbook_summary(val_bpb=-1.0)})
+        with self.assertRaisesRegex(ValueError, "lowercase"):
+            module.build_record(**{**base, "run_tag": "Campaign-42"})
+
+        baseline = module.build_record(**base)
         with tempfile.TemporaryDirectory() as directory:
             ledger = Path(directory) / "experiments.jsonl"
-            baseline = record("baseline", "keep")
-            candidate_1 = record("candidate-1", "keep")
-            ledger.write_text(
-                json.dumps(baseline) + "\n" + json.dumps(candidate_1) + "\n",
-                encoding="utf-8",
-            )
-
-            module.validate_ledger_sequence(
-                ledger,
-                run_tag="campaign-42",
-                trial="candidate-2",
-                status="keep",
-            )
-            module.validate_ledger_sequence(
-                ledger,
-                run_tag="campaign-42",
-                trial="winner-confirmation",
-                status="confirmation",
-            )
-            for run_tag, trial, status in (
-                ("campaign-42", "candidate-1", "keep"),
-                ("campaign-42", "candidate-3", "keep"),
-                ("other-campaign", "candidate-2", "keep"),
-                ("campaign-42", "baseline", "keep"),
-            ):
-                with self.subTest(run_tag=run_tag, trial=trial, status=status):
-                    with self.assertRaises(ValueError):
-                        module.validate_ledger_sequence(
-                            ledger,
-                            run_tag=run_tag,
-                            trial=trial,
-                            status=status,
-                        )
-
-            discarded_candidate = record("candidate-1", "discard")
-            ledger.write_text(
-                json.dumps(baseline) + "\n" + json.dumps(discarded_candidate) + "\n",
-                encoding="utf-8",
-            )
-            with self.assertRaisesRegex(ValueError, "kept candidate"):
-                module.validate_ledger_sequence(
-                    ledger,
-                    run_tag="campaign-42",
-                    trial="winner-confirmation",
-                    status="confirmation",
+            module.append_record(ledger, baseline)
+            before = ledger.read_bytes()
+            skipped = module.build_record(
+                **recorder_record_inputs(
+                    trial="candidate-2",
+                    git_sha=SECOND_GIT_SHA,
+                    remote_commit=SECOND_GIT_SHA,
+                    hypothesis="candidate two too early",
+                    change="one train.py change",
+                    status="discard",
+                    vessl_job_slug="autoresearch-candidate-2-abc123",
+                    vessl_job_name="autoresearch-campaign-42-2222222",
+                    train_py_sha256=sha256_marker("f"),
+                    log_sha256=sha256_marker("1"),
+                    job_json_sha256=sha256_marker("2"),
                 )
-
-            skipped_candidate = record("candidate-2", "keep")
-            ledger.write_text(
-                json.dumps(baseline) + "\n" + json.dumps(skipped_candidate) + "\n",
-                encoding="utf-8",
             )
             with self.assertRaisesRegex(ValueError, "expected candidate-1"):
-                module.validate_ledger_sequence(
-                    ledger,
-                    run_tag="campaign-42",
-                    trial="winner-confirmation",
-                    status="confirmation",
-                )
+                module.validate_ledger_sequence(ledger, record=skipped)
+            self.assertEqual(ledger.read_bytes(), before)
 
-            ledger.write_text(
-                json.dumps(baseline) + "\n" + json.dumps(baseline) + "\n",
-                encoding="utf-8",
-            )
-            with self.assertRaisesRegex(ValueError, "duplicate trial"):
-                module.validate_ledger_sequence(
-                    ledger,
-                    run_tag="campaign-42",
-                    trial="candidate-1",
-                    status="keep",
-                )
-
-            crashed_baseline = record("baseline", "crash")
-            ledger.write_text(json.dumps(crashed_baseline) + "\n", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "baseline crashed"):
-                module.validate_ledger_sequence(
-                    ledger,
-                    run_tag="campaign-42",
-                    trial="candidate-1",
-                    status="keep",
-                )
-
-    def test_auto_research_recorder_requires_and_binds_destination(self) -> None:
+    def test_auto_research_recorder_enforces_lower_winner_and_invariants(self) -> None:
         module = load_recorder()
-        required = ("--entity", "--project", "--run-tag")
-        action_by_flag = {
-            action.option_strings[0]: action
-            for action in module.build_parser()._actions
-            if action.option_strings
-        }
-        for flag in required:
-            with self.subTest(flag=flag):
-                self.assertIn(flag, action_by_flag)
-                self.assertTrue(action_by_flag[flag].required)
+        baseline = module.build_record(**recorder_record_inputs())
+        candidate_inputs = recorder_record_inputs(
+            trial="candidate-1",
+            git_sha=SECOND_GIT_SHA,
+            remote_commit=SECOND_GIT_SHA,
+            hypothesis="one mechanism predicts lower BPB",
+            change="one train.py change",
+            status="keep",
+            next_hint="confirm if it remains best",
+            summary=cookbook_summary(val_bpb=1.1),
+            vessl_job_slug="autoresearch-candidate-1-abc123",
+            vessl_job_name="autoresearch-campaign-42-2222222",
+            train_py_sha256=sha256_marker("f"),
+            log_sha256=sha256_marker("1"),
+            job_json_sha256=sha256_marker("2"),
+        )
 
-        calls: dict[str, object] = {}
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = Path(directory) / "experiments.jsonl"
+            module.append_record(ledger, baseline)
+
+            worse = module.build_record(
+                **{**candidate_inputs, "summary": cookbook_summary(val_bpb=2.0)}
+            )
+            with self.assertRaisesRegex(ValueError, "strictly lower"):
+                module.validate_ledger_sequence(ledger, record=worse)
+
+            changed_environment = module.build_record(
+                **{
+                    **candidate_inputs,
+                    "approved_resource_spec": "resourcespec-other-a100",
+                    "job_resource_spec": "resourcespec-other-a100",
+                }
+            )
+            with self.assertRaisesRegex(ValueError, "campaign invariant changed"):
+                module.validate_ledger_sequence(ledger, record=changed_environment)
+
+            duplicate_job = module.build_record(
+                **{
+                    **candidate_inputs,
+                    "vessl_job_slug": baseline["vessl_job_slug"],
+                }
+            )
+            with self.assertRaisesRegex(ValueError, "duplicate vessl_job_slug"):
+                module.validate_ledger_sequence(ledger, record=duplicate_job)
+
+            candidate = module.build_record(**candidate_inputs)
+            module.append_record(ledger, candidate)
+
+            confirmation_inputs = recorder_record_inputs(
+                trial="winner-confirmation",
+                git_sha=SECOND_GIT_SHA,
+                remote_commit=SECOND_GIT_SHA,
+                hypothesis=candidate["hypothesis"],
+                change=candidate["change"],
+                status="confirmation",
+                next_hint="freeze the evidence",
+                summary=cookbook_summary(val_bpb=1.15),
+                vessl_job_slug="autoresearch-confirmation-abc123",
+                vessl_job_name="autoresearch-campaign-42-confirm-2222222",
+                branch="autoresearch/campaign-42-confirm",
+                train_py_sha256=candidate["train_py_sha256"],
+                log_sha256=sha256_marker("3"),
+                job_json_sha256=sha256_marker("4"),
+            )
+            opposite_direction = module.build_record(
+                **{**confirmation_inputs, "summary": cookbook_summary(val_bpb=1.3)}
+            )
+            with self.assertRaisesRegex(ValueError, "below baseline"):
+                module.validate_ledger_sequence(ledger, record=opposite_direction)
+
+            changed_code = module.build_record(
+                **{**confirmation_inputs, "train_py_sha256": sha256_marker("9")}
+            )
+            with self.assertRaisesRegex(ValueError, "train_py_sha256"):
+                module.validate_ledger_sequence(ledger, record=changed_code)
+
+            confirmation = module.build_record(**confirmation_inputs)
+            module.append_record(ledger, confirmation)
+            self.assertEqual(len(ledger.read_text().splitlines()), 3)
+
+    def test_auto_research_recorder_serializes_concurrent_candidates(self) -> None:
+        module = load_recorder()
+        baseline = module.build_record(**recorder_record_inputs())
+
+        def candidate_record(marker: str, value: float) -> dict[str, object]:
+            git_sha = marker * 40
+            return module.build_record(
+                **recorder_record_inputs(
+                    trial="candidate-1",
+                    git_sha=git_sha,
+                    remote_commit=git_sha,
+                    hypothesis=f"candidate {marker}",
+                    change="one train.py change",
+                    status="keep",
+                    summary=cookbook_summary(val_bpb=value),
+                    vessl_job_slug=f"autoresearch-candidate-{marker}",
+                    vessl_job_name=f"autoresearch-campaign-42-{marker * 7}",
+                    train_py_sha256=sha256_marker(marker),
+                    log_sha256=sha256_marker(marker.upper()),
+                    job_json_sha256=sha256_marker(str(int(marker) + 4)),
+                )
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = Path(directory) / "experiments.jsonl"
+            module.append_record(ledger, baseline)
+            barrier = threading.Barrier(2)
+            results: list[str] = []
+
+            def append_candidate(record: Mapping[str, object]) -> None:
+                barrier.wait()
+                try:
+                    module.append_record(ledger, record)
+                except ValueError:
+                    results.append("rejected")
+                else:
+                    results.append("appended")
+
+            threads = [
+                threading.Thread(
+                    target=append_candidate,
+                    args=(candidate_record("2", 1.1),),
+                ),
+                threading.Thread(
+                    target=append_candidate,
+                    args=(candidate_record("3", 1.05),),
+                ),
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=5)
+
+            self.assertEqual(sorted(results), ["appended", "rejected"])
+            self.assertEqual(len(ledger.read_text().splitlines()), 2)
+
+    def test_auto_research_recorder_is_private_offline_and_wandb_native(self) -> None:
+        module = load_recorder()
+        calls: dict[str, object] = {"defined_metrics": []}
 
         class FakeSettings:
             def __init__(self, **kwargs):
@@ -714,18 +833,30 @@ class SkillBehaviorContractTest(unittest.TestCase):
                 self.dir = str(directory / "offline-run-123" / "files")
                 Path(self.dir).mkdir(parents=True)
 
+            def define_metric(self, name, **kwargs):
+                calls["defined_metrics"].append((name, kwargs))
+
             def log(self, metrics):
                 calls["metrics"] = metrics
 
-            def finish(self):
-                calls["finished"] = True
+            def finish(self, exit_code=0):
+                calls["exit_code"] = exit_code
 
         def fake_init(**kwargs):
             calls["init"] = kwargs
             return FakeRun(Path(kwargs["dir"]))
 
         fake_wandb = types.SimpleNamespace(Settings=FakeSettings, init=fake_init)
-        summary = complete_a100_summary(val_bpb=1.25, total_seconds=140.0)
+        correlation = recorder_correlation()
+        required_parameters = set(correlation)
+        actual_parameters = set(inspect.signature(module.record_offline_run).parameters)
+        self.assertTrue(
+            required_parameters <= actual_parameters,
+            f"record_offline_run missing correlation parameters: "
+            f"{sorted(required_parameters - actual_parameters)}",
+        )
+        if not required_parameters <= actual_parameters:
+            return
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with mock.patch.dict(sys.modules, {"wandb": fake_wandb}):
@@ -735,528 +866,446 @@ class SkillBehaviorContractTest(unittest.TestCase):
                     project="approved-project",
                     run_tag="campaign-42",
                     trial="candidate-1",
-                    git_sha="abc1234",
-                    gpu_identity="NVIDIA A100-SXM4-80GB",
-                    dataset_fingerprint="data-sha256",
-                    tokenizer_fingerprint="tokenizer-sha256",
+                    git_sha=GIT_SHA,
+                    remote_commit=GIT_SHA,
                     status="keep",
-                    summary=summary,
+                    summary=cookbook_summary(),
+                    **correlation,
                 )
 
-            self.assertEqual(run_id, "offline-123")
-            self.assertEqual(Path(run_directory).name, "offline-run-123")
-            self.assertEqual(
-                calls["settings"],
-                {
-                    "console": "off",
-                    "disable_git": True,
-                    "x_disable_meta": True,
-                    "x_disable_stats": True,
-                    "x_save_requirements": False,
-                    "save_code": False,
-                },
-            )
-            init = calls["init"]
-            self.assertEqual(init["entity"], "approved-entity")
-            self.assertEqual(init["project"], "approved-project")
-            self.assertEqual(init["name"], "campaign-42-candidate-1")
-            self.assertEqual(init["mode"], "offline")
-            self.assertFalse(init["save_code"])
-            self.assertEqual(
-                init["config"],
-                {
-                    "run_tag": "campaign-42",
-                    "trial": "candidate-1",
-                    "git_sha": "abc1234",
-                    "preset": "A100-micro-v1",
-                    "gpu_identity": "NVIDIA A100-SXM4-80GB",
-                    "dataset_fingerprint": "data-sha256",
-                    "tokenizer_fingerprint": "tokenizer-sha256",
-                    "parameters": 786_468,
-                    "status": "keep",
-                },
-            )
-            self.assertEqual(
-                calls["metrics"],
-                {
-                    "val_bpb": 1.25,
-                    "peak_vram_mb": 2048.0,
-                    "elapsed_seconds": 140.0,
-                },
-            )
-            self.assertTrue(calls["finished"])
+        self.assertEqual(run_id, "offline-123")
+        self.assertEqual(Path(run_directory).name, "offline-run-123")
+        settings = calls["settings"]
+        for field, expected in (
+            ("console", "off"),
+            ("disable_git", True),
+            ("disable_code", True),
+            ("disable_job_creation", True),
+            ("x_disable_meta", True),
+            ("x_disable_stats", True),
+            ("x_disable_machine_info", True),
+            ("x_save_requirements", False),
+            ("save_code", False),
+            ("host", "ralphthon-offline"),
+        ):
+            with self.subTest(setting=field):
+                self.assertEqual(settings[field], expected)
 
-            ledger = root / "experiments.jsonl"
-            first = module.build_record(
-                run_tag="campaign-42",
-                trial="baseline",
-                git_sha="abc1234",
-                hypothesis="frozen baseline",
-                change="none",
-                status="keep",
-                failure=None,
-                next_hint="candidate-1",
-                summary=summary,
-                wandb_run="offline-001",
-            )
-            second = module.build_record(
-                run_tag="campaign-42",
-                trial="candidate-1",
-                git_sha="def5678",
-                hypothesis="one testable hypothesis",
-                change="one train.py change",
-                status="discard",
-                failure=None,
-                next_hint="try another hypothesis",
-                summary=summary,
-                wandb_run="offline-002",
-            )
-            module.append_record(ledger, first)
-            original_line = ledger.read_text().splitlines()[0]
-            module.append_record(ledger, second)
-            lines = ledger.read_text().splitlines()
-            self.assertEqual(len(lines), 2)
-            self.assertEqual(lines[0], original_line)
-            self.assertEqual(json.loads(lines[0]), first)
-            self.assertEqual(json.loads(lines[1]), second)
+        init = calls["init"]
+        self.assertEqual(init["mode"], "offline")
+        self.assertEqual(init["group"], "campaign-42")
+        self.assertEqual(init["job_type"], "autoresearch-trial")
+        self.assertFalse(init["save_code"])
+        self.assertEqual(calls["defined_metrics"], [("val_bpb", {"summary": "min"})])
+        self.assertEqual(calls["exit_code"], 0)
+        self.assertEqual(calls["metrics"]["val_bpb"], 1.2345)
+        for field, expected in correlation.items():
+            with self.subTest(config_field=field):
+                self.assertEqual(init["config"][field], expected)
 
-    def test_auto_research_recorder_prevalidates_and_cleans_only_failed_run(self) -> None:
+        source = (
+            ROOT / "skills/auto-research/scripts/record_experiment.py"
+        ).read_text()
+        self.assertNotIn("--api-key", source)
+        self.assertNotIn('mode="online"', source)
+        for forbidden in ("dataset", "checkpoint", "artifact"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, init["config"])
+
+    def test_auto_research_recorder_marks_crashes_with_nonzero_exit(self) -> None:
         module = load_recorder()
-        base_args = [
-            "--summary", "summary.txt",
-            "--ledger", "experiments.jsonl",
-            "--wandb-dir", ".wandb-offline",
-            "--entity", "approved-entity",
-            "--project", "approved-project",
-            "--run-tag", "campaign-42",
-            "--trial", "candidate-1",
-            "--git-sha", "abc1234",
-            "--hypothesis", "one testable hypothesis",
-            "--change", "one train.py change",
-            "--status", "keep",
-            "--gpu-identity", "NVIDIA A100-SXM4-80GB",
-            "--dataset-fingerprint", "data-sha256",
-            "--tokenizer-fingerprint", "tokenizer-sha256",
-        ]
+        exit_codes: list[int] = []
+
+        class FakeSettings:
+            def __init__(self, **_kwargs):
+                pass
+
+        class FakeRun:
+            id = "offline-crash"
+
+            def __init__(self, directory: Path):
+                self.dir = str(directory / "offline-run-crash" / "files")
+                Path(self.dir).mkdir(parents=True)
+
+            def define_metric(self, _name, **_kwargs):
+                pass
+
+            def log(self, _metrics):
+                pass
+
+            def finish(self, exit_code=0):
+                exit_codes.append(exit_code)
+
+        def fake_init(**kwargs):
+            return FakeRun(Path(kwargs["dir"]))
+
+        fake_wandb = types.SimpleNamespace(Settings=FakeSettings, init=fake_init)
+        correlation = recorder_correlation(
+            vessl_job_state="failed",
+            vessl_job_slug="autoresearch-crash-abc123",
+            vessl_job_name="autoresearch-campaign-42-crash",
+            log_sha256=sha256_marker("1"),
+            job_json_sha256=sha256_marker("2"),
+        )
+        required_parameters = set(correlation)
+        actual_parameters = set(inspect.signature(module.record_offline_run).parameters)
+        self.assertTrue(
+            required_parameters <= actual_parameters,
+            f"record_offline_run missing correlation parameters: "
+            f"{sorted(required_parameters - actual_parameters)}",
+        )
+        if not required_parameters <= actual_parameters:
+            return
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.dict(sys.modules, {"wandb": fake_wandb}):
+                module.record_offline_run(
+                    wandb_directory=Path(directory),
+                    entity="approved-entity",
+                    project="approved-project",
+                    run_tag="campaign-42",
+                    trial="candidate-1",
+                    git_sha=GIT_SHA,
+                    remote_commit=GIT_SHA,
+                    status="crash",
+                    summary={},
+                    **correlation,
+                )
+
+        self.assertEqual(exit_codes, [1])
+
+    def test_auto_research_recorder_removes_failed_offline_run(self) -> None:
+        module = load_recorder()
+
+        class FakeSettings:
+            def __init__(self, **_kwargs):
+                pass
+
+        class FailingRun:
+            id = "offline-failed"
+
+            def __init__(self, directory: Path):
+                (directory.parent / "offline-run-sibling").mkdir(parents=True)
+                self.dir = str(directory / "offline-run-failed" / "files")
+                Path(self.dir).mkdir(parents=True)
+
+            def define_metric(self, _name, **_kwargs):
+                pass
+
+            def log(self, _metrics):
+                raise RuntimeError("synthetic W&B log failure")
+
+            def finish(self, exit_code=0):
+                pass
+
+        def fake_init(**kwargs):
+            return FailingRun(Path(kwargs["dir"]))
+
+        fake_wandb = types.SimpleNamespace(Settings=FakeSettings, init=fake_init)
+        correlation = recorder_correlation(
+            vessl_job_slug="autoresearch-failed-abc123",
+            vessl_job_name="autoresearch-campaign-42-failed",
+            log_sha256=sha256_marker("1"),
+            job_json_sha256=sha256_marker("2"),
+        )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            summary_path = root / "summary.txt"
-            summary_path.write_text("val_bpb: 1.2\n")
-            args = [str(root / value) if value == "summary.txt" else value for value in base_args]
-            with mock.patch.object(module, "record_offline_run") as offline:
-                with self.assertRaises(ValueError):
-                    module.main(args)
-            offline.assert_not_called()
+            with mock.patch.dict(sys.modules, {"wandb": fake_wandb}):
+                with self.assertRaisesRegex(RuntimeError, "synthetic W&B log failure"):
+                    module.record_offline_run(
+                        wandb_directory=root,
+                        entity="approved-entity",
+                        project="approved-project",
+                        run_tag="campaign-42",
+                        trial="candidate-1",
+                        git_sha=GIT_SHA,
+                        remote_commit=GIT_SHA,
+                        status="keep",
+                        summary=cookbook_summary(),
+                        **correlation,
+                    )
+            remaining = [path.name for path in root.rglob("offline-run-*")]
+            self.assertEqual(remaining, ["offline-run-sibling"])
 
-            summary_path.write_text(
-                "val_bpb: 1.2\npeak_vram_mb: 2048\ntraining_seconds: 120.1\n"
-                "total_seconds: 140\nparameters: 786468\ndepth: 2\n"
-                "vocab_size: 1024\nmax_seq_len: 256\ndevice_batch_size: 64\n"
-                "total_batch_size: 16384\neval_tokens: 262144\ntime_budget: 120\n"
-                "window_pattern: L\n"
-            )
-            for flag in (
-                "--gpu-identity",
-                "--dataset-fingerprint",
-                "--tokenizer-fingerprint",
-            ):
-                empty_args = [
-                    str(root / value) if value == "summary.txt" else value
-                    for value in base_args
-                ]
-                empty_args[empty_args.index(flag) + 1] = ""
-                with self.subTest(empty_evidence=flag), mock.patch.object(
-                    module, "record_offline_run"
-                ) as offline:
-                    with self.assertRaises(ValueError):
-                        module.main(empty_args)
-                    offline.assert_not_called()
-
-            blocked_ledger = root / "ledger-directory"
-            blocked_ledger.mkdir()
-            blocked_args = [
-                str(root / value) if value == "summary.txt" else value
-                for value in base_args
-            ]
-            blocked_args[blocked_args.index("--ledger") + 1] = str(blocked_ledger)
-            with mock.patch.object(module, "record_offline_run") as offline:
-                with self.assertRaisesRegex(ValueError, "not a regular file"):
-                    module.main(blocked_args)
-            offline.assert_not_called()
-
-            ledger = root / "experiments.jsonl"
-            baseline = module.build_record(
-                run_tag="campaign-42",
-                trial="baseline",
-                git_sha="abc1234",
-                hypothesis="frozen baseline",
-                change="none",
-                status="keep",
-                failure=None,
-                next_hint="candidate-1",
-                summary=complete_a100_summary(val_bpb=1.3, total_seconds=140.0),
-                wandb_run="offline-baseline",
-            )
-            preserved_line = json.dumps(baseline, separators=(",", ":")) + "\n"
-            ledger.write_text(preserved_line)
-
-            ledger.write_text(preserved_line + preserved_line)
-            duplicate_args = [
-                str(root / value) if value in {"summary.txt", "experiments.jsonl", ".wandb-offline"} else value
-                for value in base_args
-            ]
-            with mock.patch.object(module, "record_offline_run") as offline:
-                with self.assertRaisesRegex(ValueError, "duplicate trial"):
-                    module.main(duplicate_args)
-            offline.assert_not_called()
-            ledger.write_text(preserved_line)
-
-            run_directory = root / ".wandb-offline" / "offline-run-new"
-            run_directory.mkdir(parents=True)
-            (run_directory / "files").mkdir()
-            sibling = root / ".wandb-offline" / "offline-run-existing"
-            sibling.mkdir()
-            cleanup_args = [
-                str(root / value) if value in {"summary.txt", "experiments.jsonl", ".wandb-offline"} else value
-                for value in base_args
-            ]
-            with mock.patch.object(
-                module,
-                "record_offline_run",
-                return_value=("new-run", str(run_directory)),
-            ), mock.patch.object(module, "append_record", side_effect=OSError("disk full")):
-                with self.assertRaisesRegex(RuntimeError, "ledger append failed"):
-                    module.main(cleanup_args)
-
-            self.assertFalse(run_directory.exists())
-            self.assertTrue(sibling.exists())
-            self.assertEqual(ledger.read_text(), preserved_line)
-
-    def test_auto_research_onboarding_is_conditional_and_runbook_is_executable(self) -> None:
-        skill = self.read_skill("auto-research")
-        runbook = (
-            ROOT / "skills/auto-research/references/a100-micro-runbook.md"
-        ).read_text()
-        ledger = (ROOT / "skills/auto-research/assets/experiment-ledger.md").read_text()
-        control = (ROOT / "skills/auto-research/assets/AUTORESEARCH.md").read_text()
-        run_card = (ROOT / "skills/auto-research/assets/a100-run-card.md").read_text()
-
-        for phrase in (
-            "new Karpathy training evidence",
-            "frozen Track 1 paper",
-            "skip",
-            "Select exactly one path",
-            "Training path (Track 1 or Both)",
-            "Track 2-only frozen-paper path",
-            "does not require `val_bpb`",
-            "does not require a GPU",
-            "does not require W&B or VESSL",
-        ):
-            with self.subTest(skill_phrase=phrase):
-                self.assertIn(phrase, skill)
-
-        for phrase in (
-            "git clone https://github.com/karpathy/autoresearch.git",
-            'git switch --detach "$UPSTREAM_SHA"',
-            "git switch -c autoresearch/$RUN_TAG",
-            "uv sync --frozen",
-            "prepare.py --num-shards 1",
-            "sha256sum",
-            "uv run train.py",
-            'WANDB_VERSION="0.28.0"',
-            'uv run --with "wandb==$WANDB_VERSION" python record_experiment.py',
-            "git restore --source",
-            'uv run --with "wandb==$WANDB_VERSION" wandb sync --entity "$WANDB_ENTITY" --project "$WANDB_PROJECT" --skip-console --no-sync-tensorboard',
-            'GPU_IDENTITY="$(nvidia-smi',
-            'sha256sum prepare.py record_experiment.py > evidence/invariant-files.sha256',
-            'sha256sum train.py > evidence/baseline-train.sha256',
-            'git commit --only -m "chore: freeze A100-micro-v1 executable inputs" -- prepare.py train.py record_experiment.py',
-            "Raw data, tokenizer contents, outputs, and checkpoints are never committed",
-            'RECORDER_JSON="outputs/$TRIAL.recorder.json"',
-            '> "$RECORDER_JSON"',
-            'WANDB_RUN_DIRECTORY="$(python3 -c',
-            'timeout --signal=TERM --kill-after=30s "${RUN_TIMEOUT_SECONDS}s"',
-            '--status crash',
-            '--failure "$FAILURE"',
-            'TRIAL="candidate-1"',
-        ):
-            with self.subTest(runbook_phrase=phrase):
-                self.assertIn(phrase, runbook)
-
-        preset_index = runbook.find("Freeze the complete pre-baseline preset")
-        prepare_index = runbook.find("prepare.py --num-shards 1")
-        recorder_index = runbook.find(
-            'cp "$PLUGIN_ROOT/skills/auto-research/scripts/record_experiment.py"'
-        )
-        invariant_index = runbook.find(
-            "sha256sum prepare.py record_experiment.py > evidence/invariant-files.sha256"
-        )
-        self.assertGreaterEqual(preset_index, 0)
-        self.assertGreaterEqual(prepare_index, 0)
-        self.assertGreaterEqual(recorder_index, 0)
-        self.assertGreaterEqual(invariant_index, 0)
-        if min(preset_index, prepare_index) >= 0:
-            self.assertLess(preset_index, prepare_index)
-        if min(recorder_index, invariant_index) >= 0:
-            self.assertLess(recorder_index, invariant_index)
-        self.assertNotIn('--gpu-identity "NVIDIA A100', runbook)
-        self.assertGreaterEqual(runbook.count('--gpu-identity "$GPU_IDENTITY"'), 2)
-
-        candidate = runbook.split("### Candidate template", 1)[1].split(
-            "Repeat sequentially", 1
-        )[0]
-        attempt_commit = candidate.index(
-            'git commit --only -m "experiment: attempt $RUN_TAG $TRIAL" -- train.py'
-        )
-        candidate_sha = candidate.index('CANDIDATE_SHA="$(git rev-parse HEAD)"')
-        training_marker = (
-            'if timeout --signal=TERM --kill-after=30s "${RUN_TIMEOUT_SECONDS}s"'
-        )
-        self.assertIn(training_marker, candidate)
-        training = candidate.find(training_marker)
-        recorder = candidate.find("python record_experiment.py", max(training, 0))
-        self.assertGreaterEqual(recorder, 0)
-        self.assertLess(attempt_commit, candidate_sha)
-        if training >= 0:
-            self.assertLess(candidate_sha, training)
-            if recorder >= 0:
-                self.assertLess(training, recorder)
-        self.assertGreaterEqual(candidate.count('--git-sha "$CANDIDATE_SHA"'), 2)
-        self.assertGreaterEqual(
-            candidate.count(
-                'git commit --only -m "experiment: restore after $TRIAL" -- train.py'
-            ),
-            2,
-        )
-        self.assertIn('export LAST_KEPT_SHA="$CANDIDATE_SHA"', candidate)
-        self.assertNotIn('git commit -m "experiment: keep', candidate)
-        self.assertIn(
-            'if ! git commit --only -m "experiment: attempt $RUN_TAG $TRIAL" -- train.py; then',
-            candidate,
-        )
-        self.assertIn(
-            'if ! git diff --quiet "$CANDIDATE_SHA" -- train.py; then',
-            candidate,
-        )
-        self.assertIn("exit 1", candidate)
-
-        winner = runbook.split("Rerun the best kept candidate", 1)[1]
-        self.assertIn(
-            'if ! git diff --quiet "$LAST_KEPT_SHA" -- train.py; then', winner
-        )
-        self.assertIn('CONFIRMATION_SHA="$(git rev-parse HEAD)"', winner)
-        self.assertIn("export CONFIRMATION_SHA", winner)
-        self.assertIn('--git-sha "$CONFIRMATION_SHA"', winner)
-        self.assertIn("exit 1", winner)
-
-    def test_auto_research_runbook_fails_closed_and_rechecks_frozen_inputs(self) -> None:
-        skill = self.read_skill("auto-research")
-        runbook = (
-            ROOT / "skills/auto-research/references/a100-micro-runbook.md"
-        ).read_text()
-        ledger = (ROOT / "skills/auto-research/assets/experiment-ledger.md").read_text()
-        control = (ROOT / "skills/auto-research/assets/AUTORESEARCH.md").read_text()
-        run_card = (ROOT / "skills/auto-research/assets/a100-run-card.md").read_text()
-        baseline = runbook.split("### Baseline template", 1)[1].split(
-            "### Candidate template", 1
-        )[0]
-        candidate = runbook.split("### Candidate template", 1)[1].split(
-            "Repeat sequentially", 1
-        )[0]
-        winner = runbook.split("Rerun the best kept candidate", 1)[1]
-
-        self.assertIn('export RUN_TIMEOUT_SECONDS="240"', runbook)
-        baseline_files = (
-            "prepare.py train.py record_experiment.py "
-            "evidence/data-files.sha256 evidence/tokenizer-files.sha256 "
-            "evidence/invariant-files.sha256 evidence/baseline-train.sha256"
-        )
-        self.assertIn(f"git add -- {baseline_files}", runbook)
-        self.assertIn(
-            f'git commit --only -m "chore: freeze A100-micro-v1 executable inputs" -- {baseline_files}',
-            runbook,
-        )
-        self.assertNotIn("git add -A", runbook)
-
-        for name, section in (
-            ("baseline", baseline),
-            ("candidate", candidate),
-            ("winner", winner),
-        ):
-            with self.subTest(section=name):
-                self.assertIn("set -euo pipefail", section)
-                self.assertIn(
-                    "sha256sum --check evidence/invariant-files.sha256", section
-                )
-                self.assertIn(
-                    "sha256sum --check evidence/data-files.sha256", section
-                )
-                self.assertIn(
-                    "| cmp -s - evidence/data-files.sha256", section
-                )
-                self.assertIn(
-                    'git diff --quiet "$BASELINE_SHA" -- evidence/data-files.sha256',
-                    section,
-                )
-                self.assertIn(
-                    "sha256sum --check evidence/tokenizer-files.sha256", section
-                )
-                self.assertIn(
-                    'timeout --signal=TERM --kill-after=30s "${RUN_TIMEOUT_SECONDS}s"',
-                    section,
-                )
-                self.assertNotIn('export WANDB_RUN_DIRECTORY="$(python3', section)
-
-        self.assertIn(
-            "sha256sum --check evidence/baseline-train.sha256", baseline
-        )
-        self.assertIn(
-            'git diff --quiet "$CANDIDATE_SHA" -- train.py', candidate
-        )
-        self.assertIn(
-            'git diff --quiet "$LAST_KEPT_SHA" -- train.py', winner
-        )
-
-        training_marker = (
-            'if timeout --signal=TERM --kill-after=30s "${RUN_TIMEOUT_SECONDS}s"'
-        )
-        for name, section in (
-            ("baseline", baseline),
-            ("candidate", candidate),
-            ("winner", winner),
-        ):
-            success_branch = section.split(training_marker, 1)[1]
-            recorder_index = success_branch.index("python record_experiment.py")
-            for post_run_gate in (
-                'git diff --quiet "$BASELINE_SHA" -- evidence/data-files.sha256',
-                "sha256sum --check evidence/invariant-files.sha256",
-                "sha256sum --check evidence/data-files.sha256",
-                "| cmp -s - evidence/data-files.sha256",
-                "sha256sum --check evidence/tokenizer-files.sha256",
-            ):
-                with self.subTest(section=name, post_run_gate=post_run_gate):
-                    gate_index = success_branch.find(post_run_gate)
-                    self.assertGreaterEqual(gate_index, 0)
-                    self.assertLess(gate_index, recorder_index)
-
-        for name, document in (
-            ("skill", skill),
-            ("control", control),
-            ("run-card", run_card),
-            ("runbook", runbook),
-        ):
-            with self.subTest(allowlist_document=name):
-                self.assertIn("W&B allowlist", document)
-                self.assertIn("`run_tag`", document)
-                self.assertIn("`trial`", document)
-
-        self.assertIn("initialize it as an empty file", ledger)
-        self.assertIn("example only", ledger)
-        self.assertIn("Do not copy", ledger)
-        self.assertNotIn('"val_bpb":null', ledger)
-        self.assertIn('"run_tag"', ledger)
-
-    def test_auto_research_scoped_baseline_commit_handles_untracked_recorder(
+    def test_auto_research_recorder_main_prevalidates_and_cleans_append_failure(
         self,
     ) -> None:
+        module = load_recorder()
+        init_calls: list[dict[str, object]] = []
+
+        class FakeSettings:
+            def __init__(self, **_kwargs):
+                pass
+
+        class FakeRun:
+            id = "offline-main"
+
+            def __init__(self, directory: Path):
+                self.dir = str(directory / "offline-run-main" / "files")
+                Path(self.dir).mkdir(parents=True)
+
+            def define_metric(self, _name, **_kwargs):
+                pass
+
+            def log(self, _metrics):
+                pass
+
+            def finish(self, exit_code=0):
+                pass
+
+        def fake_init(**kwargs):
+            init_calls.append(kwargs)
+            return FakeRun(Path(kwargs["dir"]))
+
+        fake_wandb = types.SimpleNamespace(Settings=FakeSettings, init=fake_init)
+
+        def cli_args(
+            inputs: Mapping[str, object],
+            summary: Path,
+            train_py: Path,
+            evaluation_file: Path,
+            ledger: Path,
+            wandb_dir: Path,
+        ) -> list[str]:
+            job_json = ledger.parent / f"{inputs['vessl_job_slug']}.json"
+            job_json.write_text(
+                json.dumps(
+                    {
+                        "slug": inputs["vessl_job_slug"],
+                        "name": inputs["vessl_job_name"],
+                        "workloadState": inputs["vessl_job_state"],
+                        "resourceSpec": {"slug": inputs["job_resource_spec"]},
+                    }
+                )
+            )
+            flags = {
+                "--summary": summary,
+                "--job-json": job_json,
+                "--train-py": train_py,
+                "--evaluation-file": evaluation_file,
+                "--ledger": ledger,
+                "--wandb-dir": wandb_dir,
+                "--entity": "approved-entity",
+                "--project": "approved-project",
+                "--run-tag": inputs["run_tag"],
+                "--trial": inputs["trial"],
+                "--git-sha": inputs["git_sha"],
+                "--remote-commit": inputs["remote_commit"],
+                "--hypothesis": inputs["hypothesis"],
+                "--change": inputs["change"],
+                "--status": inputs["status"],
+                "--cookbook-sha": inputs["cookbook_sha"],
+                "--vessl-job-slug": inputs["vessl_job_slug"],
+                "--vessl-job-name": inputs["vessl_job_name"],
+                "--vessl-job-state": inputs["vessl_job_state"],
+                "--approved-resource-spec": inputs["approved_resource_spec"],
+                "--job-resource-spec": inputs["job_resource_spec"],
+                "--gpu-identity": inputs["gpu_identity"],
+                "--gpu-count": inputs["gpu_count"],
+                "--branch": inputs["branch"],
+                "--cache-fingerprint": inputs["cache_fingerprint"],
+            }
+            return [str(item) for pair in flags.items() for item in pair]
+
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-
-            def git(*args: str) -> str:
-                result = subprocess.run(
-                    ("git", *args),
-                    cwd=root,
-                    check=True,
-                    text=True,
-                    capture_output=True,
+            summary = root / "run.log"
+            summary.write_text(
+                "\n".join(
+                    (
+                        "val_bpb: 1.2",
+                        "training_seconds: 300",
+                        "total_seconds: 320",
+                        "peak_vram_mb: 20000",
+                        "num_params_M: 50.3",
+                    )
                 )
-                return result.stdout.strip()
+            )
+            train_py = root / "train.py"
+            train_py.write_text("# frozen candidate train.py\n")
+            evaluation_file = root / "prepare.py"
+            evaluation_file.write_text("# frozen evaluation harness\n")
 
-            git("init", "-q")
-            git("config", "user.name", "Contract Test")
-            git("config", "user.email", "contract@example.invalid")
-            for name in ("prepare.py", "train.py", "unrelated.txt"):
-                (root / name).write_text("initial\n")
-            git("add", "--", "prepare.py", "train.py", "unrelated.txt")
-            git("commit", "-q", "-m", "initial")
+            existing_ledger = root / "existing.jsonl"
+            baseline_inputs = recorder_record_inputs(
+                train_py_sha256=module.sha256_file(train_py),
+                evaluation_fingerprint=module.sha256_file(evaluation_file),
+            )
+            module.append_record(
+                existing_ledger,
+                module.build_record(**baseline_inputs),
+            )
+            skipped = recorder_record_inputs(
+                trial="candidate-2",
+                git_sha=SECOND_GIT_SHA,
+                remote_commit=SECOND_GIT_SHA,
+                hypothesis="skipped candidate",
+                change="one train.py change",
+                status="discard",
+                vessl_job_slug="autoresearch-candidate-2-main",
+                vessl_job_name="autoresearch-campaign-42-2222222",
+                train_py_sha256=sha256_marker("f"),
+                log_sha256=sha256_marker("1"),
+                job_json_sha256=sha256_marker("2"),
+            )
+            with mock.patch.dict(sys.modules, {"wandb": fake_wandb}):
+                with self.assertRaisesRegex(ValueError, "expected candidate-1"):
+                    module.main(
+                        cli_args(
+                            skipped,
+                            summary,
+                            train_py,
+                            evaluation_file,
+                            existing_ledger,
+                            root / "prevalidation-wandb",
+                        )
+                    )
+            self.assertEqual(init_calls, [])
 
-            (root / "prepare.py").write_text("preset\n")
-            (root / "train.py").write_text("micro model\n")
-            (root / "record_experiment.py").write_text("recorder\n")
-            (root / "evidence").mkdir()
-            manifest_names = (
-                "data-files.sha256",
-                "tokenizer-files.sha256",
-                "invariant-files.sha256",
-                "baseline-train.sha256",
-            )
-            for name in manifest_names:
-                (root / "evidence" / name).write_text(f"{name}\n")
-            (root / "unrelated.txt").write_text("must remain staged\n")
-            git("add", "--", "unrelated.txt")
-            baseline_files = (
-                "prepare.py",
-                "train.py",
-                "record_experiment.py",
-                *(f"evidence/{name}" for name in manifest_names),
-            )
-            git("add", "--", *baseline_files)
-            git(
-                "commit",
-                "-q",
-                "--only",
-                "-m",
-                "freeze inputs",
-                "--",
-                *baseline_files,
-            )
+            new_ledger = root / "new.jsonl"
+            new_wandb = root / "append-failure-wandb"
+            with mock.patch.dict(sys.modules, {"wandb": fake_wandb}):
+                with mock.patch.object(
+                    module,
+                    "_append_record_locked",
+                    side_effect=OSError("synthetic append failure"),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "ledger append failed"):
+                        module.main(
+                            cli_args(
+                            recorder_record_inputs(),
+                            summary,
+                            train_py,
+                            evaluation_file,
+                            new_ledger,
+                                new_wandb,
+                            )
+                        )
+            self.assertEqual(len(init_calls), 1)
+            self.assertEqual(list(new_wandb.rglob("offline-run-*")), [])
 
-            self.assertEqual(
-                set(git("show", "--pretty=", "--name-only", "HEAD").splitlines()),
-                set(baseline_files),
+            mismatch_ledger = root / "mismatch.jsonl"
+            mismatch_args = cli_args(
+                recorder_record_inputs(),
+                summary,
+                train_py,
+                evaluation_file,
+                mismatch_ledger,
+                root / "mismatch-wandb",
             )
-            self.assertEqual(git("diff", "--cached", "--name-only"), "unrelated.txt")
-
-            baseline_sha = git("rev-parse", "HEAD")
-            (root / "evidence" / "data-files.sha256").write_text("regenerated\n")
-            drift = subprocess.run(
-                (
-                    "git",
-                    "diff",
-                    "--quiet",
-                    baseline_sha,
-                    "--",
-                    "evidence/data-files.sha256",
-                ),
-                cwd=root,
-            )
-            self.assertNotEqual(drift.returncode, 0)
-
-    def test_auto_research_dataset_manifest_rejects_added_shard(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            data = root / "data"
-            data.mkdir()
-            (data / "shard-0.parquet").write_text("first shard\n")
-            manifest = root / "data-files.sha256"
-            create = (
-                "find data -type f -print0 | sort -z | "
-                "xargs -0 sha256sum"
-            )
-            with manifest.open("w") as output:
-                subprocess.run(
-                    ("bash", "-c", create), cwd=root, check=True, stdout=output
+            job_json_index = mismatch_args.index("--job-json") + 1
+            Path(mismatch_args[job_json_index]).write_text(
+                json.dumps(
+                    {
+                        "slug": "autoresearch-baseline-abc123",
+                        "name": "autoresearch-campaign-42-1111111",
+                        "workloadState": "succeeded",
+                        "resourceSpec": {"slug": "resourcespec-wrong-a100"},
+                    }
                 )
-            verify = f"{create} | cmp -s - {manifest.name}"
+            )
+            with mock.patch.dict(sys.modules, {"wandb": fake_wandb}):
+                with self.assertRaisesRegex(ValueError, "does not contain"):
+                    module.main(mismatch_args)
+            self.assertEqual(len(init_calls), 1)
+
+            success_ledger = root / "success.jsonl"
+            success_args = cli_args(
+                recorder_record_inputs(),
+                summary,
+                train_py,
+                evaluation_file,
+                success_ledger,
+                root / "success-wandb",
+            )
+            success_job_json = Path(
+                success_args[success_args.index("--job-json") + 1]
+            )
+            with mock.patch.dict(sys.modules, {"wandb": fake_wandb}):
+                with mock.patch("builtins.print"):
+                    self.assertEqual(module.main(success_args), 0)
+            saved = json.loads(success_ledger.read_text())
+            self.assertEqual(saved["log_sha256"], module.sha256_file(summary))
+            self.assertEqual(saved["train_py_sha256"], module.sha256_file(train_py))
             self.assertEqual(
-                subprocess.run(("bash", "-c", verify), cwd=root).returncode,
-                0,
+                saved["evaluation_fingerprint"], module.sha256_file(evaluation_file)
             )
-            (data / "shard-1.parquet").write_text("unexpected shard\n")
-            self.assertNotEqual(
-                subprocess.run(("bash", "-c", verify), cwd=root).returncode,
-                0,
+            self.assertEqual(
+                saved["job_json_sha256"], module.sha256_file(success_job_json)
             )
+
+    def test_official_vessl_resource_catalog_is_surfaced(self) -> None:
+        path = (
+            ROOT
+            / "skills"
+            / "vessl-cloud-onboarding"
+            / "references"
+            / "official-repositories.md"
+        )
+        self.assertTrue(path.is_file())
+        text = path.read_text() if path.is_file() else ""
+        for url in (
+            "https://github.com/vessl-ai/vessl-cloud-cookbook",
+            VESSL_AUTORESEARCH_URL,
+            "https://github.com/vessl-ai/vessl-cloud-cookbook/tree/main/gemma4-finetuning",
+            "https://github.com/vessl-ai/vessl-cloud-cookbook/tree/main/gpu-cost-benchmark",
+            "https://github.com/vessl-ai/vessl-cloud-cookbook/tree/main/aqr-finance",
+            "https://github.com/vessl-ai/vessl-cloud-cookbook/tree/main/_template",
+            "https://github.com/vessl-ai",
+            "https://github.com/vessl-ai/physical-ai-hackathon-demo",
+            "https://github.com/vessl-ai/nccl-multinode-example",
+            "https://github.com/vessl-ai/vessl-cloud-integration",
+            "https://github.com/vessl-ai/mcpctl",
+            "https://docs.cloud.vessl.ai/mcp",
+            "https://docs.cloud.vessl.ai/cli/ai-tools",
+        ):
+            with self.subTest(url=url):
+                self.assertIn(url, text)
+        for phrase in (
+            "vesslctl skill show --output json",
+            "vesslctl skill install --target cross-client",
+            "legacy",
+            "not an execution SOT",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_official_wandb_resource_catalog_is_surfaced(self) -> None:
+        path = (
+            ROOT
+            / "skills"
+            / "wandb-onboarding"
+            / "references"
+            / "official-ecosystem.md"
+        )
+        self.assertTrue(path.is_file())
+        text = path.read_text() if path.is_file() else ""
+        for url in (
+            "https://github.com/wandb/docs",
+            "https://github.com/wandb/skills",
+            "https://github.com/wandb/examples",
+            "https://github.com/wandb/edu",
+            "https://github.com/wandb/artifacts-examples",
+            "https://github.com/wandb/launch-jobs",
+            "https://github.com/wandb/sweeps",
+            "https://github.com/wandb/wandb",
+            "https://docs.wandb.ai/aria/autoresearch",
+            "https://docs.wandb.ai/platform/mcp-server",
+            "https://github.com/wandb/wandb-mcp-server",
+        ):
+            with self.subTest(url=url):
+                self.assertIn(url, text)
+        for phrase in (
+            "primary SOT",
+            "experimental",
+            "reference only",
+            "one falsifiable",
+            "single-variable probe",
+            "W&B Launch",
+            "VESSL",
+            "Preview",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
 
     def test_wandb_onboarding_keeps_secrets_interactive_and_runs_offline_first(self) -> None:
         text = self.read_skill("wandb-onboarding")
@@ -1270,11 +1319,19 @@ class SkillBehaviorContractTest(unittest.TestCase):
             "entity",
             "project",
             "visibility",
+            "upload allowlist",
+            "wandb sync --entity",
+            "local post-processing",
+            "vesslctl job logs",
+            "group",
+            "job_type",
+            "val_bpb",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
 
         self.assertNotIn("wandb login $WANDB_API_KEY", text)
+        self.assertNotIn("WANDB_API_KEY=", text)
         asset = ROOT / "skills/wandb-onboarding/assets/wandb-quickstart.py"
         self.assertTrue(asset.is_file())
         asset_text = asset.read_text() if asset.is_file() else ""
@@ -1282,7 +1339,7 @@ class SkillBehaviorContractTest(unittest.TestCase):
         self.assertIn("WANDB_PROJECT", asset_text)
         self.assertIn("--relogin --cloud --verify", text)
 
-    def test_vessl_cloud_onboarding_separates_verification_from_billable_compute(self) -> None:
+    def test_vessl_cloud_onboarding_covers_cookbook_job_lifecycle_and_cost(self) -> None:
         text = self.read_skill("vessl-cloud-onboarding")
 
         for phrase in (
@@ -1304,6 +1361,14 @@ class SkillBehaviorContractTest(unittest.TestCase):
             "Terminate",
             "legacy",
             "vesslctl auth login --web",
+            VESSL_AUTORESEARCH_URL,
+            "object volume",
+            "vesslctl job create",
+            "vesslctl job show",
+            "vesslctl job logs",
+            "vesslctl job terminate",
+            "polling timeout",
+            "keeps running",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)

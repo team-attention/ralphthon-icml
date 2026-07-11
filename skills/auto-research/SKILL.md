@@ -7,13 +7,13 @@ description: Use when preparing Ralphthon research specifications or 연구 명�
 
 ## Overview
 
-Turn one testable idea into reproducible evidence, then produce a submission-ready artifact. When the task needs new Karpathy training evidence, use the tightly bounded single-A100 campaign. Keep claims no stronger than the recorded results.
+Turn one testable idea into reproducible evidence, then produce a submission-ready artifact. When the task needs new autoresearch training evidence, run the official VESSL cookbook recipe on one approved A100 with a bounded safety and W&B observability overlay. Keep claims no stronger than the recorded results.
 
-Read [the event workflow and evidence contract](references/workflow.md) before planning. For a Karpathy campaign, also read the complete [A100-micro runbook](references/a100-micro-runbook.md). Copy the appropriate template from `assets/` into the participant workspace.
+Read [the event workflow and evidence contract](references/workflow.md) before planning. For a Training campaign, also read the complete [official VESSL autoresearch runbook](references/vessl-autoresearch-runbook.md). Copy the appropriate template from `assets/` into the participant workspace.
 
 ## Preflight
 
-Confirm the selected Track, current time, 16:30 submission hard cut, permitted public data, available evidence, and whether the work creates new Karpathy training evidence. Do not load private participant, reviewer, messaging, or operations records.
+Confirm the selected Track, current time, 16:30 submission hard cut, permitted public data, available evidence, and whether the work creates new autoresearch training evidence. Do not load private participant, reviewer, messaging, or operations records.
 
 ## Submission Contract
 
@@ -33,19 +33,22 @@ Select exactly one path below. Do not merge the compute and no-compute preflight
 
 ### Training path (Track 1 or Both)
 
-Choose this path only when generating **new Karpathy training evidence**. It includes all compute, cost, metric, and onboarding requirements below.
+Choose this path only when generating **new autoresearch training evidence**. It includes all compute, cost, metric, and onboarding requirements below.
 
 1. Freeze a **research spec** containing one **falsifiable hypothesis**, a named **baseline**, `val_bpb` as the **evaluation metric**, dataset, budget, and stop condition.
 2. **REQUIRED SUB-SKILL:** Use `wandb-onboarding`, including its synthetic offline run. Before online sync, show entity, project, visibility, and the exact W&B allowlist and obtain **explicit confirmation**.
-3. **REQUIRED SUB-SKILL:** Use `vessl-cloud-onboarding`. Run `vesslctl resource-spec list --usable-only`; show the live single-A100 spec, hourly price, credit, image, storage, wall-clock cap, total estimate, and cleanup plan. Provision only after **explicit confirmation**.
-4. Verify exactly one A100 with `nvidia-smi`. **Do not fall back** to another GPU, CPU, or larger model. Stop on A100, CUDA, or FlashAttention incompatibility.
-5. Copy [the campaign control file](assets/AUTORESEARCH.md), [run card](assets/a100-run-card.md), [experiment ledger template](assets/experiment-ledger.md), and `scripts/record_experiment.py`, then execute the complete [A100-micro runbook](references/a100-micro-runbook.md). The recorder parses each saved summary, appends `experiments.jsonl`, and creates only an allowlisted W&B offline run until separately approved sync.
-6. Run one baseline, at most **three candidate trials**, and one **winner confirmation**. Use one hypothesis and one `train.py` change per candidate; keep only a lower `val_bpb`.
-7. Separate evidence from interpretation, report **failure modes** and limitations, and produce Track 1 plus its self-review. For Both, freeze Track 1, copy [the Track 2 Review Agent template](assets/track-2-agent-template.md) to `review-agent.md`, freeze its version/input hashes, and run it with [the Track 2 review result template](assets/track-2-review-template.md). Submit both artifacts.
+3. **REQUIRED SUB-SKILL:** Use `vessl-cloud-onboarding`. Run `vesslctl resource-spec list --usable-only -o json`; show the live exact single A100 spec, hourly price, credit, image, object volume, wall-clock cap, total estimate, and cleanup/timeout plan. Provision only after **explicit confirmation**.
+4. Use [`vessl-ai/vessl-cloud-cookbook/autoresearch`](https://github.com/vessl-ai/vessl-cloud-cookbook/tree/main/autoresearch) pinned at `97a0af14b0acae042162b1f70f17fbe2d570afa2` as the execution SOT. Use a participant-owned writable fork and the recipe's `vesslctl job create` flow. Override its default with the approved live A100 spec; **do not fall back** to another GPU, CPU, or a larger model, and never substitute H100.
+5. Keep the official benchmark unchanged: this is an unchanged benchmark, not a reimplementation. The baseline uses the pinned `prepare.py` and `train.py`; candidates may modify only `train.py`, one hypothesis and one change at a time. Do not modify the evaluation harness, dependencies, benchmark reports, data, tokenizer, or batch-job scripts.
+6. Copy [the campaign control file](assets/AUTORESEARCH.md), [VESSL A100 run card](assets/vessl-a100-run-card.md), [experiment ledger template](assets/experiment-ledger.md), and `scripts/record_experiment.py`, then execute the complete [official VESSL autoresearch runbook](references/vessl-autoresearch-runbook.md). The recorder consumes each fetched VESSL log locally, appends `experiments.jsonl`, and creates only an allowlisted W&B offline run until separately approved sync.
+7. Run one baseline, at most three candidate trials executed sequentially, and one **winner confirmation**. Do not use the cookbook's parallel fan-out or unbounded loop. Keep only a lower `val_bpb`.
 
-Training uses a **W&B allowlist** containing only `run_tag`, `trial`, Git SHA, preset, GPU identity, dataset fingerprint, tokenizer fingerprint, `val_bpb`, peak VRAM, exact parameter count, elapsed time, and status. Do not upload datasets, checkpoints, secrets, or private participant data.
+Do not fall back when the approved single A100 is unavailable; stop and report the blocker.
+8. Separate evidence from interpretation, report **failure modes** and limitations, and produce Track 1 plus its self-review. For Both, freeze Track 1, copy [the Track 2 Review Agent template](assets/track-2-agent-template.md) to `review-agent.md`, freeze its version/input hashes, and run it with [the Track 2 review result template](assets/track-2-review-template.md). Submit both artifacts.
 
-The sole preset is `A100-micro-v1`: 786,468 parameters, a 120-second training budget, a 240-second external per-run timeout, and 16 evaluation steps. Pin upstream `karpathy/autoresearch` at `228791fb499afffb54b46200aca536f79142f117`, use an isolated cache with `prepare.py --num-shards 1`, recheck frozen code/data/tokenizer manifests around every GPU run, append every outcome to `experiments.jsonl`, and preserve unrelated files with file-scoped Git operations.
+Training uses a **W&B allowlist** containing only `run_tag`, `trial`, Git and cookbook SHAs, remote branch/commit, VESSL Job slug/name/state, approved/actual resource spec, exact A100 model/count, canonical cache and evidence hashes, `val_bpb`, reported parameter/VRAM/time values, and status. Store runs locally with `group=run_tag` and `job_type=autoresearch-trial`. Exclude console logs, source code, Git patches, requirements, machine metrics/info, datasets, checkpoints, artifacts, secrets, and private participant data. W&B's offline format still includes internal SDK metadata (sanitized host, SDK/Python/platform versions, timestamps/runtime, and SDK telemetry records); disclose it in the action-time sync approval.
+
+The cookbook recipe is the sole execution profile; no custom micro preset is provided. Preserve its benchmark settings and record A100 results only against the same pinned cache/evaluation identity. The cookbook's polling timeout does not terminate a remote Job: inspect the Job and execute the approved termination action when it fires. Append every outcome to `experiments.jsonl`, and preserve unrelated files with file-scoped Git operations. **DO NOT USE** `git reset --hard`, `git add -A`, `LOOP FOREVER`, or `NEVER STOP`.
 
 ### General Track 1 path (or Both)
 
@@ -86,8 +89,8 @@ On the Training path only, also stop when the live GPU is not exactly one A100, 
 - Recompute headline values from the frozen evidence and confirm the winner rerun before claiming improvement.
 - Trace every number and central claim to a saved result; verify citations, the 2-4 page limit, baseline fairness, metric validity, negative results, and self-review.
 - For Track 2, verify the paper/evidence hashes and that `review-agent.md` produced the structured result without inventing missing evidence.
-- For Training, inspect the append-only ledger, offline W&B run directories, exact experiment count, best confirmed `val_bpb`, artifact paths, cost exposure, and cleanup state.
-- Treat MFU as diagnostic only; use `val_bpb` as the research metric for A100-micro-v1.
+- For Training, inspect the append-only ledger, offline W&B run directories, VESSL Job correlation, exact experiment count, best confirmed `val_bpb`, artifact paths, cost exposure, and cleanup state.
+- Treat MFU as diagnostic only; use `val_bpb` as the research metric. Do not compare A100 measurements directly with the official H100 benchmark.
 
 ## Output
 

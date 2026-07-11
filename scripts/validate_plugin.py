@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Final, NamedTuple
@@ -24,6 +25,17 @@ PLUGIN_FIELDS: Final = (
     "skills",
     "interface",
 )
+MARKDOWN_LINK: Final = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+AGENT_INTERFACE_FIELDS: Final = (
+    "display_name",
+    "short_description",
+    "default_prompt",
+)
+AGENT_INTERFACE_ENTRY: Final = re.compile(
+    r"^  ([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]*(.*))?$"
+)
+
+
 class ValidationError(NamedTuple):
     path: Path
     message: str
@@ -31,6 +43,14 @@ class ValidationError(NamedTuple):
 
 def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def yaml_scalar_is_nonempty(raw_value: str) -> bool:
+    value = raw_value.strip()
+    if not value or value.startswith("#"):
+        return False
+    value = re.split(r"\s+#", value, maxsplit=1)[0].strip()
+    return value not in {"", '""', "''", "~"} and value.lower() != "null"
 
 
 def frontmatter(text: str) -> list[str]:
@@ -121,6 +141,65 @@ def validate_skill_files(
     return names
 
 
+def validate_local_markdown_links(
+    root: Path, errors: list[ValidationError]
+) -> None:
+    paths = [root / "README.md", *sorted((root / "skills").rglob("*.md"))]
+    for path in paths:
+        if not path.is_file():
+            continue
+        for match in MARKDOWN_LINK.finditer(read_text(path)):
+            raw_target = match.group(1).strip().strip("<>")
+            if (
+                not raw_target
+                or raw_target.startswith("#")
+                or raw_target.startswith(("https://", "http://", "mailto:"))
+            ):
+                continue
+            target = raw_target.split("#", maxsplit=1)[0]
+            resolved = (path.parent / target).resolve()
+            if not resolved.exists():
+                add_error(
+                    errors,
+                    root,
+                    path,
+                    f"local Markdown link does not resolve: {raw_target}",
+                )
+
+
+def validate_agent_metadata(root: Path, errors: list[ValidationError]) -> None:
+    for agents_dir in sorted((root / "skills").glob("*/agents")):
+        path = agents_dir / "openai.yaml"
+        if not path.is_file():
+            add_error(errors, root, path, "agents/ requires openai.yaml")
+            continue
+        lines = read_text(path).splitlines()
+        try:
+            interface_index = next(
+                index for index, line in enumerate(lines) if line == "interface:"
+            )
+        except StopIteration:
+            add_error(errors, root, path, "missing exact top-level interface mapping")
+            continue
+        values: dict[str, str] = {}
+        for line in lines[interface_index + 1 :]:
+            if line and not line.startswith(" "):
+                break
+            match = AGENT_INTERFACE_ENTRY.fullmatch(line)
+            if match is None:
+                continue
+            key, raw_value = match.groups(default="")
+            values[key] = raw_value if yaml_scalar_is_nonempty(raw_value) else ""
+        for field in AGENT_INTERFACE_FIELDS:
+            if not values.get(field):
+                add_error(
+                    errors,
+                    root,
+                    path,
+                    f"missing nonempty UI metadata field: {field}",
+                )
+
+
 def validate_repository(root: Path = ROOT) -> list[ValidationError]:
     root = root.resolve()
     errors: list[ValidationError] = []
@@ -133,6 +212,8 @@ def validate_repository(root: Path = ROOT) -> list[ValidationError]:
     if not skill_paths:
         add_error(errors, root, root / "skills", "no skills discovered")
     validate_skill_files(root, skill_paths, errors)
+    validate_local_markdown_links(root, errors)
+    validate_agent_metadata(root, errors)
     legacy_commands = root / "commands"
     if legacy_commands.exists():
         add_error(

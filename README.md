@@ -9,7 +9,7 @@ The plugin exposes five event workflows as discoverable Agent Skills.
 | Skill | Purpose |
 | --- | --- |
 | `hello-ralphthon-icml` | Welcome attendees and prepare QR/POP orientation copy. |
-| `auto-research` | Build general Track 1 research, run bounded Karpathy A100-micro training, or package a no-compute Track 2 Review Agent and result. |
+| `auto-research` | Build general Track 1 research, run the pinned official VESSL autoresearch recipe on A100 with local-first W&B tracking, or package a no-compute Track 2 Review Agent and result. |
 | `wandb-onboarding` | Guide W&B Cloud signup, private API-key login, and an offline-first synthetic run. |
 | `vessl-cloud-onboarding` | Verify current VESSL Cloud and `vesslctl` setup before optional billable compute. |
 | `world-model-ideation` | Convert a world-model concept into a falsifiable experiment and Track path. |
@@ -44,41 +44,31 @@ W&B and VESSL Cloud use a hybrid browser-and-terminal workflow. Codex can open o
 
 `auto-research` starts by choosing exactly one mutually exclusive path:
 
-- **Training path:** run a bounded experiment campaign based on [`karpathy/autoresearch` at commit `228791fb499afffb54b46200aca536f79142f117`](https://github.com/karpathy/autoresearch/commit/228791fb499afffb54b46200aca536f79142f117), then use verified evidence for a Track 1 paper. This path requires W&B and VESSL Cloud onboarding.
+- **Training path:** use [`vessl-ai/vessl-cloud-cookbook/autoresearch`](https://github.com/vessl-ai/vessl-cloud-cookbook/tree/main/autoresearch) pinned at [`97a0af14b0acae042162b1f70f17fbe2d570afa2`](https://github.com/vessl-ai/vessl-cloud-cookbook/tree/97a0af14b0acae042162b1f70f17fbe2d570afa2/autoresearch) as the execution source of truth, run it on an explicitly approved live single-A100 spec, then use verified evidence for a Track 1 paper. At that pin, its baseline `prepare.py` and `train.py` match [`karpathy/autoresearch@228791f`](https://github.com/karpathy/autoresearch/commit/228791fb499afffb54b46200aca536f79142f117). This path requires W&B and VESSL Cloud onboarding.
 - **General Track 1 path:** use a non-Karpathy workflow or credible existing evidence to produce the research agent workflow, paper, and self-review. It **does not automatically require W&B, VESSL, or A100**.
 - **Track 2-only:** freeze a reusable **Track 2 Review Agent** as `review-agent.md`, then use it to review an existing Track 1 paper without provisioning compute, cloning the training repository, or claiming a new experiment. Submit both the agent artifact and review result.
 
-The Training path has one default preset, `A100-micro-v1`:
+The Training path does not define a custom model or benchmark preset. Its **unchanged benchmark** keeps the official recipe's preparation, dependencies, and baseline intact. After the baseline, each candidate may modify only `train.py`, with one hypothesis and one change. The safety overlay permits one baseline, at most three **sequential** candidates, and one unchanged confirmation rerun. It does not import the cookbook's parallel fan-out, unbounded loop, H100 default, or destructive reset guidance. Only a lower `val_bpb` that repeats in the same A100/cache/evaluation environment may support a Track 1 claim; A100 and published H100 measurements are not directly comparable.
 
-| Setting | Value |
-| --- | ---: |
-| Layers (`DEPTH`) | 2 |
-| Width | 128 |
-| Attention heads | 1 |
-| Vocabulary | 1,024 |
-| Context | 256 |
-| Window | `L` |
-| Device batch | 64 |
-| Total batch | `2**14` |
-| Gradient accumulation | 1 |
-| Evaluation tokens | `2**18` |
-| Evaluation steps | 16 |
-| Training budget per run | 120 seconds |
-| Expected parameters | 786,468 |
+The official cookbook remains the only remote compute plane: a participant-owned fork/branch is pushed, `vesslctl job create` clones it, an object volume supplies the benchmark cache, and `vesslctl job show`/`job logs` return state and results. The branch, volume, Job, and polling-timeout behavior are reviewed before spend. A polling timeout does not stop remote billing, so the approved cleanup flow must inspect and, when authorized, terminate the Job.
 
-The campaign prepares one isolated data shard, runs one baseline, at most three candidate trials, and one confirmation rerun. It permits one hypothesis and one `train.py` change per candidate. Only a lower `val_bpb` that repeats in the confirmation run may support a Track 1 claim.
+Experiment metadata is written after each fetched VESSL log to the local append-only recorder `skills/auto-research/scripts/record_experiment.py`; W&B offline is mandatory. W&B receives only approved run/trial, Git/cookbook, VESSL Job/A100/cache correlation, metric, resource, time, and status fields, grouped by campaign with `job_type=autoresearch-trial`. Console output, code, Git patches, requirements, machine metrics/info, datasets, checkpoints, artifacts, credentials, and API keys are disabled or excluded. W&B's offline format still contains internal SDK metadata such as a sanitized host label, SDK/Python/platform versions, timestamps/runtime, and SDK telemetry records. Before any `wandb sync`, disclose those fields and show the entity, project, visibility, allowlist, and exact offline run directories, then obtain explicit confirmation.
 
-Experiment metadata is written first to the local append-only recorder `skills/auto-research/scripts/record_experiment.py`; W&B offline is the mandatory smoke-test mode. Before any approved sync, show the W&B entity, project, visibility, and upload allowlist. Never upload the dataset, checkpoint, credentials, or API key.
-
-Before VESSL creates anything billable, query `vesslctl resource-spec list --usable-only` and show a live cost card with the exact resource spec, hourly price, credits, image, expected wall time, storage exposure, and cleanup choice. The run must use a confirmed **single A100**, verified with `nvidia-smi`; it must stop rather than silently fall back to another GPU or enlarge the model.
+Before VESSL creates anything billable, query `vesslctl resource-spec list --usable-only` and show a live cost card with the exact resource spec, hourly price, credits, image, expected wall time, storage exposure, and cleanup choice. The created Job configuration must retain that confirmed **single A100** spec; stop rather than silently falling back to another GPU or enlarging the model. If VESSL exposes runtime GPU identity independently, cross-check it without changing the benchmark.
 
 Manual live-account boundary: repository tests do not create accounts, submit OAuth/MFA/CAPTCHA, enter an API key, sync a W&B run, authenticate VESSL, or create/stop paid compute. Those steps remain user-controlled and require their documented action-time confirmations.
 
 Test the full safety gate with this prompt:
 
 ```text
-Use auto-research in Training path with A100-micro-v1. Verify W&B offline first, show the approved sync fields, inspect the current VESSL single-A100 live cost, and stop for confirmation before creating compute.
+Use auto-research in Training path with the pinned official VESSL cookbook. Verify W&B offline first, show the approved sync fields, inspect the current VESSL single-A100 live cost and object-volume exposure, and stop for confirmation before creating compute.
 ```
+
+## Official Platform Material
+
+VESSL's current repository collection includes the main [VESSL Cloud cookbook](https://github.com/vessl-ai/vessl-cloud-cookbook), [Gemma 4 fine-tuning](https://github.com/vessl-ai/vessl-cloud-cookbook/tree/main/gemma4-finetuning), [GPU cost benchmark](https://github.com/vessl-ai/vessl-cloud-cookbook/tree/main/gpu-cost-benchmark), [AQR finance](https://github.com/vessl-ai/vessl-cloud-cookbook/tree/main/aqr-finance), and the [recipe template](https://github.com/vessl-ai/vessl-cloud-cookbook/tree/main/_template). See the skill's [curated current/legacy map](skills/vessl-cloud-onboarding/references/official-repositories.md). Older `vessl-ai/examples` and `vessl-training-recipes` repositories are reference-only, not the current Cloud execution source.
+
+W&B does not maintain one repository literally named “cookbook.” Its official equivalents are the [documentation source](https://github.com/wandb/docs), [agent skills](https://github.com/wandb/skills), [examples](https://github.com/wandb/examples), [education](https://github.com/wandb/edu), [Artifacts examples](https://github.com/wandb/artifacts-examples), [Launch Jobs](https://github.com/wandb/launch-jobs), and [Sweeps](https://github.com/wandb/sweeps). The optional [ARIA autoresearch](https://docs.wandb.ai/aria/autoresearch) surface may analyze an approved synced run, but VESSL remains the scheduler. See the [W&B ecosystem map](skills/wandb-onboarding/references/official-ecosystem.md) for what this plugin uses and deliberately excludes.
 
 ## Public Event Facts
 

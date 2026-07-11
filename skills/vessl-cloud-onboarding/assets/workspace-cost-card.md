@@ -4,7 +4,8 @@
 
 - Organization:
 - Team:
-- Workspace or Job name:
+- Workspace, Job, or volume name:
+- Job slug, if created:
 - Region / cluster:
 
 ## Compute and Price
@@ -16,6 +17,7 @@
 - Hourly price:
 - Current credit:
 - Planned duration:
+- Polling timeout and consequence:
 - Estimated tutorial compute cost:
 
 ## Runtime and Data
@@ -34,6 +36,7 @@
 ## Cleanup
 
 - Planned action: Pause / Terminate
+- Timeout action approved:
 - Trigger time or completion signal:
 - State retained or destroyed:
 - Charges that may continue:
@@ -44,3 +47,4 @@
 - Live values rechecked immediately before creation: [ ]
 - User explicitly approved this exact resource: [ ]
 - User understands the cleanup consequence: [ ]
+- Final compute state and persistent-storage exposure rechecked: [ ]
