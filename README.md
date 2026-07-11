@@ -2,13 +2,13 @@
 
 Codex plugin and skill repository for `Ralphthon @ICML "Auto Research" supported by Codex`.
 
-The plugin exposes five event workflows as discoverable Agent Skills.
+The plugin exposes five research workflows as discoverable Agent Skills.
 
 ## Included
 
 | Skill | Purpose |
 | --- | --- |
-| `hello-ralphthon-icml` | Welcome attendees and prepare QR/POP orientation copy. |
+| `exploring-autoresearch` | Discover and compare directly linked autoresearch examples, cookbooks, and implementations without executing them. |
 | `auto-research` | Build general Track 1 research, run the pinned official VESSL autoresearch recipe on A100 with local-first W&B tracking, or package a no-compute Track 2 Review Agent and result. |
 | `wandb-onboarding` | Guide W&B Cloud signup, private API-key login, and an offline-first synthetic run. |
 | `vessl-cloud-onboarding` | Verify current VESSL Cloud and `vesslctl` setup before optional billable compute. |
@@ -31,7 +31,7 @@ Codex discovers skills from `skills/`. Workflow behavior, verification, and outp
 Ask naturally or name a skill:
 
 ```text
-Create a Ralphthon @ICML attendee welcome pack.
+Use exploring-autoresearch to compare autoresearch starting points for an Apple silicon laptop.
 Use auto-research to freeze a research spec for Track 1 and Track 2.
 Use wandb-onboarding to verify a synthetic W&B run offline before upload.
 Use vessl-cloud-onboarding to check VESSL Cloud pricing without creating compute.
@@ -39,6 +39,12 @@ Use world-model-ideation to compare three falsifiable world-model questions.
 ```
 
 W&B and VESSL Cloud use a hybrid browser-and-terminal workflow. Codex can open official pages, inspect visible state, and run safe diagnostics. The user handles credentials, OAuth, MFA, CAPTCHA, email verification, legal acceptance, API keys, payment details, and final signup submission.
+
+`exploring-autoresearch` discovers and compares read-only examples; `auto-research` executes or produces submissions under this repository's evidence and safety gates. Discovery never authorizes cloning, credentials, compute, or external loop and rollback commands.
+
+## Autoresearch Example Overview
+
+The discovery skill provides a concise direct-link overview and a fuller classified catalog. Good first anchors are [Karpathy's minimal autoresearch reference](https://github.com/karpathy/autoresearch), the [official VESSL executable recipe](https://github.com/vessl-ai/vessl-cloud-cookbook/tree/main/autoresearch), and [W&B ARIA's Preview workflow](https://docs.wandb.ai/aria/autoresearch). It also compares observability, Apple MLX, coding-agent, Kubernetes/PR, and community-index examples while labeling compute, credentials, benchmark compatibility, mutability, licensing, and safety caveats.
 
 ## Auto Research Paths
 
@@ -106,7 +112,7 @@ Expected catalog output:
 ```text
 Validation passed
 - plugin: ralphthon-icml
-- skills (5): auto-research, hello-ralphthon-icml, vessl-cloud-onboarding, wandb-onboarding, world-model-ideation
+- skills (5): auto-research, exploring-autoresearch, vessl-cloud-onboarding, wandb-onboarding, world-model-ideation
 ```
 
 Validate an individual skill with the skill-creator helper:

@@ -16,12 +16,28 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_SKILLS = {
-    "hello-ralphthon-icml",
+    "exploring-autoresearch",
     "auto-research",
     "wandb-onboarding",
     "vessl-cloud-onboarding",
     "world-model-ideation",
 }
+AUTORESEARCH_EXAMPLE_URLS = (
+    "https://docs.cloud.vessl.ai/examples/autoresearch",
+    "https://github.com/vessl-ai/vessl-cloud-cookbook/tree/main/autoresearch",
+    "https://vessl.ai/ko/blog/dont-tie-gpu-to-agent-ko",
+    "https://wandb.ai/byyoung3/autoresearch/reports/How-to-add-W-B-logging-to-Autoresearch-experiments---VmlldzoxNjE3Nzg2MQ",
+    "https://github.com/wandb/discovery-forge",
+    "https://github.com/leo-lilinxiao/codex-autoresearch",
+    "https://github.com/uditgoenka/autoresearch",
+    "https://github.com/karpathy/autoresearch",
+    "https://github.com/davebcn87/pi-autoresearch",
+    "https://github.com/aiming-lab/AutoResearchClaw",
+    "https://github.com/trevin-creator/autoresearch-mlx",
+    "https://github.com/WecoAI/awesome-autoresearch",
+    "https://docs.wandb.ai/aria/autoresearch",
+    "https://github.com/wandb/senpai",
+)
 VESSL_AUTORESEARCH_URL = (
     "https://github.com/vessl-ai/vessl-cloud-cookbook/tree/main/autoresearch"
 )
@@ -128,10 +144,10 @@ class RepositoryContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "plugin"
             shutil.copytree(ROOT, root, ignore=shutil.ignore_patterns(".git", "__pycache__"))
-            skill = root / "skills" / "hello-ralphthon-icml" / "SKILL.md"
+            skill = root / "skills" / "auto-research" / "SKILL.md"
             skill.write_text(
                 skill.read_text().replace(
-                    "name: hello-ralphthon-icml",
+                    "name: auto-research",
                     "name: wrong-skill-name",
                     1,
                 )
@@ -239,7 +255,15 @@ class RepositoryContractTest(unittest.TestCase):
         prompt_parts = default_prompt if isinstance(default_prompt, list) else [default_prompt]
         searchable = " ".join(manifest["keywords"] + prompt_parts).lower()
 
-        for phrase in ("auto-research", "wandb", "vessl", "world-model"):
+        for phrase in (
+            "exploring-autoresearch",
+            "examples",
+            "catalog",
+            "auto-research",
+            "wandb",
+            "vessl",
+            "world-model",
+        ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, searchable)
 
@@ -247,7 +271,7 @@ class RepositoryContractTest(unittest.TestCase):
         text = (ROOT / "README.md").read_text()
 
         for phrase in (
-            "hello-ralphthon-icml",
+            "exploring-autoresearch",
             "auto-research",
             "wandb-onboarding",
             "vessl-cloud-onboarding",
@@ -261,12 +285,127 @@ class RepositoryContractTest(unittest.TestCase):
                 self.assertIn(phrase, text)
 
         self.assertNotIn("slash commands", text)
-        hello_skill = (ROOT / "skills/hello-ralphthon-icml/SKILL.md").read_text()
-        self.assertNotIn("world-model sponsor narrative", hello_skill)
+        self.assertNotIn("hello-ralphthon-icml", text)
+        self.assertNotIn("attendee welcome", text.lower())
+        self.assertNotIn("QR/POP", text)
+
+    def test_exploring_autoresearch_readonly_catalog_contract(self) -> None:
+        skill = self.read_text("skills/exploring-autoresearch/SKILL.md")
+        catalog = self.read_text(
+            "skills/exploring-autoresearch/references/catalog.md"
+        )
+        scenario = self.read_text("tests/scenarios/exploring-autoresearch.md")
+        ui = self.read_text("skills/exploring-autoresearch/agents/openai.yaml")
+        combined = "\n".join((skill, catalog, scenario))
+
+        self.assertTrue(skill, "missing exploring-autoresearch skill")
+        self.assertTrue(catalog, "missing exploring-autoresearch catalog")
+        self.assertTrue(scenario, "missing exploring-autoresearch scenario")
+        self.assertTrue(ui, "missing exploring-autoresearch UI metadata")
+        if not all((skill, catalog, scenario, ui)):
+            return
+        frontmatter = skill.split("---", 2)[1]
+        self.assertIn("name: exploring-autoresearch", frontmatter)
+        description = next(
+            line.removeprefix("description: ")
+            for line in frontmatter.splitlines()
+            if line.startswith("description: ")
+        )
+        self.assertTrue(description.startswith("Use when"))
+        for trigger in (
+            "examples",
+            "implementations",
+            "cookbooks",
+            "comparisons",
+            "inspiration",
+            "famous repositories",
+            "starting-point recommendations",
+        ):
+            with self.subTest(trigger=trigger):
+                self.assertIn(trigger, description)
+
+        for phrase in (
+            "read-only",
+            "3-7",
+            "official/community status",
+            "resource type",
+            "why it is relevant",
+            "compute/platform assumptions",
+            "cost/credential exposure",
+            "benchmark compatibility",
+            "mutable/pinned status",
+            "license caveat",
+            "safety caveat",
+            "authoritative implementation guidance",
+            "conceptual posts",
+            "self-reported case studies",
+            "Never clone, install, execute, copy credentials, provision compute",
+            "auto-research",
+        ):
+            with self.subTest(skill_phrase=phrase):
+                self.assertIn(phrase, skill)
+
+        for phrase in (
+            "H100",
+            "A100 evidence",
+            "val_bpb",
+            "mutable `main`",
+            "pin",
+            "unlicensed as code",
+            "offline-first allowlist",
+            "not Karpathy `train.py` optimization",
+            "Preview",
+            "W&B Launch",
+            "Kubernetes",
+            "PR-based",
+            "git reset --hard",
+            "repeat-forever",
+            "2026-07-12",
+            "quality proof",
+        ):
+            with self.subTest(catalog_phrase=phrase):
+                self.assertIn(phrase, catalog)
+
+        for url in AUTORESEARCH_EXAMPLE_URLS:
+            with self.subTest(url=url):
+                self.assertIn(url, catalog)
+
+        self.assertIn("directly linked", combined)
+        self.assertEqual(
+            ui.splitlines(),
+            [
+                "interface:",
+                '  display_name: "Autoresearch Examples"',
+                '  short_description: "Compare trusted autoresearch starting points"',
+                '  default_prompt: "Use $exploring-autoresearch to compare directly linked autoresearch examples for my constraints."',
+            ],
+        )
+
+    def test_readme_integrates_discovery_without_duplicating_catalog(self) -> None:
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn("five", readme.lower())
+        self.assertIn("exploring-autoresearch", readme)
+        self.assertIn("discovers and compares", readme)
+        self.assertIn("executes or produces submissions", readme)
+        self.assertIn("direct-link", readme)
+        self.assertIn("https://github.com/karpathy/autoresearch", readme)
+        self.assertIn(VESSL_AUTORESEARCH_URL, readme)
+        self.assertIn("https://docs.wandb.ai/aria/autoresearch", readme)
+        self.assertLess(
+            sum(url in readme for url in AUTORESEARCH_EXAMPLE_URLS),
+            len(AUTORESEARCH_EXAMPLE_URLS),
+        )
+
+    @staticmethod
+    def read_text(relative: str) -> str:
+        path = ROOT / relative
+        if not path.is_file():
+            return ""
+        return path.read_text()
 
     def test_official_cookbook_integration_docs_and_metadata(self) -> None:
         manifest = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text())
-        self.assertEqual(manifest["version"], "0.5.0")
+        self.assertEqual(manifest["version"], "0.6.0")
         manifest_text = json.dumps(manifest, ensure_ascii=False)
         for phrase in ("VESSL Cloud Cookbook", "A100", "W&B", "autoresearch"):
             with self.subTest(manifest_phrase=phrase):

@@ -1,7 +1,7 @@
 {
   "name": "ralphthon-icml",
-  "version": "0.5.0",
-  "description": "Ralphthon @ICML onboarding, the official VESSL Cloud Cookbook autoresearch recipe on A100, local-first W&B observability, and world-model ideation skills for Codex",
+  "version": "0.6.0",
+  "description": "Autoresearch examples and catalog discovery, the official VESSL Cloud Cookbook recipe on A100, local-first W&B observability, and world-model ideation skills for Codex",
   "author": {
     "name": "Team Attention",
     "url": "https://github.com/team-attention"
@@ -14,6 +14,10 @@
     "icml",
     "codex",
     "auto-research",
+    "autoresearch-examples",
+    "autoresearch-catalog",
+    "research-examples",
+    "cookbook-comparison",
     "karpathy",
     "a100",
     "vessl-cloud-cookbook",
@@ -25,16 +29,13 @@
     "vesslctl",
     "gpu-compute",
     "hackathon",
-    "event-ops",
-    "onboarding",
-    "qr",
-    "pop"
+    "onboarding"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Ralphthon @ICML",
-    "shortDescription": "Run official VESSL autoresearch safely on A100.",
-    "longDescription": "Five Codex skills for Ralphthon @ICML: attendee orientation, general research or the pinned official VESSL autoresearch recipe on A100 with local-first W&B tracking, Review Agent packaging, platform onboarding, and testable world-model ideation.",
+    "shortDescription": "Compare examples or run bounded autoresearch.",
+    "longDescription": "Five Codex skills for Ralphthon @ICML: read-only autoresearch examples and catalog discovery, general research or the pinned official VESSL autoresearch recipe on A100 with local-first W&B tracking, Review Agent packaging, platform onboarding, and testable world-model ideation.",
     "developerName": "Team Attention",
     "category": "Productivity",
     "capabilities": [
@@ -44,7 +45,7 @@
     ],
     "websiteURL": "https://luma.com/hjuo7auc",
     "defaultPrompt": [
-      "Create a Ralphthon @ICML attendee welcome pack",
+      "Use exploring-autoresearch to compare directly linked autoresearch examples and recommend a starting point",
       "Use auto-research for general Track 1, the pinned official VESSL cookbook on an approved A100 with local W&B tracking, or a Track 2 Review Agent plus result",
       "Guide me through W&B onboarding with an offline-first run",
       "Set up VESSL Cloud and review compute cost before creating a workspace",
