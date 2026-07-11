@@ -1330,6 +1330,9 @@ class SkillBehaviorContractTest(unittest.TestCase):
             "Do not claim",
             "Dalpha",
             "unconfirmed",
+            "0–2 for",
+            "Action alignment",
+            "General Track 1",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)

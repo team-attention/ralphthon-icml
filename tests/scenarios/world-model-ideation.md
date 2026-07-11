@@ -13,10 +13,11 @@ The baseline invented “Dalpha WorldLab,” presented Dalpha as a world-model s
 - Reject unverified Dalpha/world-model sponsorship, product, award, and judging claims.
 - Treat external language as unconfirmed until approved public evidence is available.
 - Define state, observation, action, target, hypothesis, baseline, metric, and minimum experiment.
+- Score three candidates for world-model necessity, intervention identifiability, falsifiability, fair-baseline feasibility, and deadline fit; reject candidates that fail the gate.
+- Name an appropriate known-transition, action-alignment, or split/leakage smoke test for the selected direction.
 - Include shortcut, rollout, distribution-shift, and baseline-fairness failure modes.
-- Preserve negative evidence.
-- Convert evidence to Track 1 or a frozen paper to Track 2 via `auto-research`.
+- Hand the selected spec to General Track 1, bounded Karpathy work to Training Track 1, or a frozen paper to Track 2 via `auto-research`.
 
 ## GREEN observation with the skill
 
-The forward run marked all Dalpha language as approval-dependent draft, rejected unverified sponsorship/product/judging claims, ranked three research questions, froze a state/action/hypothesis/baseline/metric spec, defined a minimum disconfirming experiment and failure analysis, and routed the result to Track 1/2 without inventing a third Track.
+The forward run marked all Dalpha language as approval-dependent draft, rejected unverified sponsorship/product/judging claims, scored and ranked three research questions, prepared a concise state/action/hypothesis/baseline/metric handoff with one relevant smoke test, and routed the result to the appropriate Track 1/2 path without inventing a third Track.

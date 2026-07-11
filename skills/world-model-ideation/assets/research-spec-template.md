@@ -1,46 +1,45 @@
-# World Model Research Spec
+# World Model Research Handoff
+
+Use this one-page handoff to choose a direction. Move execution records and results into `auto-research` after selection.
+
+## Candidate Selection
+
+| Candidate question | Necessity (0–2) | Intervention (0–2) | Falsifiability (0–2) | Baseline fairness (0–2) | Deadline fit (0–2) | Total | Select/reject reason |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | | | | | | | |
+| 2 | | | | | | | |
+| 3 | | | | | | | |
 
 ## System
 
+- Research pattern:
 - Environment:
-- State:
-- Observation:
-- Action/intervention:
-- Prediction or planning target:
-- Why this is a world-model question rather than a scripted demo:
+- State and observation:
+- Action/intervention and timing:
+- Prediction or planning target and horizon:
+- Why this needs a world model rather than a scripted demo or static predictor:
 
 ## Testable Claim
 
 - Falsifiable hypothesis:
-- Baseline:
-- Primary evaluation metric:
-- Success threshold:
-- Dataset/task and sample rule:
-- Compute/data/time budget:
+- Named baseline and fairness match:
+- Primary evaluation metric and success threshold:
+- Claim limit:
 
-## Minimum Experiment
+## Smallest Useful Experiment
 
-- Smallest end-to-end run:
-- Smoke-test cases:
-- Raw evidence to save:
-- Stop condition:
-- Reproducibility inputs:
+- Simplest end-to-end comparison:
+- Dataset/task and split or sample rule:
+- Relevant smoke test (known transition, action alignment, or split/leakage):
+- Likely failure mode:
+- Time or compute boundary:
 
-## Failure Modes
+## Auto Research Route
 
-- Shortcut/leakage:
-- Rollout or state-transition failure:
-- Distribution shift:
-- Baseline fairness risk:
-- Other:
-
-## Track Conversion
-
-- Track 1 paper question and evidence table:
-- Track 2 review focus:
+- Chosen route (General Track 1, Training Track 1, or Track 2):
+- Handoff question and first action:
 
 ## Public Claims
 
 - Verified public facts:
-- Draft/unconfirmed statements:
-- Claims removed pending verification:
+- Draft/unconfirmed statements to omit:
