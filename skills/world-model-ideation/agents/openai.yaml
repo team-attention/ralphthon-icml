@@ -1,4 +1,4 @@
 interface:
   display_name: "World Model Ideation"
-  short_description: "Turn world-model ideas into testable research"
-  default_prompt: "Use $world-model-ideation to create a falsifiable world-model research spec and minimum experiment."
+  short_description: "Shape world-model ideas into research questions"
+  default_prompt: "Use $world-model-ideation to compare three testable world-model research questions."
