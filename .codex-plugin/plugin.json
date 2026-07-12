@@ -19,7 +19,9 @@
     "vessl-cloud-cookbook",
     "world-model",
     "wandb",
+    "weave",
     "experiment-tracking",
+    "observability",
     "vessl",
     "vessl-cloud",
     "vesslctl",
@@ -34,7 +36,7 @@
   "interface": {
     "displayName": "Ralphthon @ICML",
     "shortDescription": "Run official VESSL autoresearch safely on A100.",
-    "longDescription": "Five Codex skills for Ralphthon @ICML: attendee orientation, general research or the pinned official VESSL autoresearch recipe on A100 with local-first W&B tracking, Review Agent packaging, platform onboarding, and testable world-model ideation.",
+    "longDescription": "Codex workflows for Ralphthon @ICML: attendee orientation, research and the pinned official VESSL autoresearch recipe on A100, local-first W&B experiment tracking, Weave tracing, platform onboarding, and testable world-model ideation.",
     "developerName": "Team Attention",
     "category": "Productivity",
     "capabilities": [
@@ -48,7 +50,12 @@
       "Use auto-research for general Track 1, the pinned official VESSL cookbook on an approved A100 with local W&B tracking, or a Track 2 Review Agent plus result",
       "Guide me through W&B onboarding with an offline-first run",
       "Set up VESSL Cloud and review compute cost before creating a workspace",
-      "Turn a world-model idea into a falsifiable experiment"
+      "Turn a world-model idea into a falsifiable experiment",
+      "Use $weave-add-tracing to add and verify Weave tracing in an AI application",
+      "Use $wandb-track-experiment to track iterative experiments and alerts",
+      "Use $wandb-project-analyst to analyze live W&B project data",
+      "Walk me through the W&B Models hands-on notebook",
+      "Walk me through the W&B Weave hands-on notebook"
     ],
     "brandColor": "#111111"
   }

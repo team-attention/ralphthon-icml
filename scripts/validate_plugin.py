@@ -50,7 +50,7 @@ def yaml_scalar_is_nonempty(raw_value: str) -> bool:
     if not value or value.startswith("#"):
         return False
     value = re.split(r"\s+#", value, maxsplit=1)[0].strip()
-    return value not in {"", '""', "''", "~"} and value.lower() != "null"
+    return value not in {"", '\"\"', "''", "~"} and value.lower() != "null"
 
 
 def frontmatter(text: str) -> list[str]:

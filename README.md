@@ -2,7 +2,7 @@
 
 Codex plugin and skill repository for `Ralphthon @ICML "Auto Research" supported by Codex`.
 
-The plugin exposes five event workflows as discoverable Agent Skills.
+The plugin exposes five core event workflows and three W&B companion workflows as Agent Skills.
 
 ## Included
 
@@ -13,8 +13,11 @@ The plugin exposes five event workflows as discoverable Agent Skills.
 | `wandb-onboarding` | Guide W&B Cloud signup, private API-key login, and an offline-first synthetic run. |
 | `vessl-cloud-onboarding` | Verify current VESSL Cloud and `vesslctl` setup before optional billable compute. |
 | `world-model-ideation` | Convert a world-model concept into a falsifiable experiment and Track path. |
+| `wandb-track-experiment` | Add one-run-per-candidate experiment tracking, provenance, summaries, and guarded alerts. |
+| `weave-add-tracing` | Add compact, useful Weave traces to an existing LLM or agent application. |
+| `wandb-project-analyst` | Analyze live Models and Weave project data with the W&B MCP server. |
 
-Each skill may include `references/` for detailed official guidance, `assets/` for reusable templates, and `agents/openai.yaml` for Codex UI metadata.
+The W&B companion skills and hands-on notebooks live under `skills/wandb/`. Each skill may include `references/` for detailed official guidance and `agents/openai.yaml` for Codex UI metadata.
 
 ## Install
 
@@ -24,7 +27,7 @@ Install this repository as a local Codex plugin from its parent marketplace or p
 ralphthon-icml
 ```
 
-Codex discovers skills from `skills/`. Workflow behavior, verification, and output contracts live in each `SKILL.md`.
+Codex discovers the core skills from `skills/` and workspace skill links from `.agents/skills/`. Workflow behavior, verification, and output contracts live in each `SKILL.md`.
 
 ## Usage
 
@@ -36,6 +39,11 @@ Use auto-research to freeze a research spec for Track 1 and Track 2.
 Use wandb-onboarding to verify a synthetic W&B run offline before upload.
 Use vessl-cloud-onboarding to check VESSL Cloud pricing without creating compute.
 Use world-model-ideation to compare three falsifiable world-model questions.
+Use $wandb-track-experiment to add W&B tracking and alerts to my experiment loop.
+Use $weave-add-tracing to add Weave tracing to my agent.
+Use $wandb-project-analyst to compare the best runs in my W&B project.
+Walk me through the W&B Models hands-on notebook.
+Walk me through the W&B Weave hands-on notebook.
 ```
 
 W&B and VESSL Cloud use a hybrid browser-and-terminal workflow. Codex can open official pages, inspect visible state, and run safe diagnostics. The user handles credentials, OAuth, MFA, CAPTCHA, email verification, legal acceptance, API keys, payment details, and final signup submission.
@@ -64,21 +72,39 @@ Test the full safety gate with this prompt:
 Use auto-research in Training path with the pinned official VESSL cookbook. Verify W&B offline first, show the approved sync fields, inspect the current VESSL single-A100 live cost and object-volume exposure, and stop for confirmation before creating compute.
 ```
 
+## W&B Workflows
+
+- [`skills/wandb/wandb-track-experiment`](skills/wandb/wandb-track-experiment/SKILL.md) instruments Codex, Ralph loop, and other iterative research workflows with one W&B run per candidate and opt-in alerts.
+- [`skills/wandb/weave-add-tracing`](skills/wandb/weave-add-tracing/SKILL.md) adds and verifies focused Weave trace trees without changing application behavior.
+- [`skills/wandb/wandb-project-analyst`](skills/wandb/wandb-project-analyst/SKILL.md) uses the W&B MCP server to inspect existing runs, traces, evaluations, and artifacts.
+
+The skills are organized by W&B product workflow rather than competition track. Track 1 commonly uses experiment tracking; Track 2 commonly uses Weave tracing, while both can use project analysis.
+
+## W&B Hands-on
+
+Models, based on the official [W&B Intro notebook](https://github.com/wandb/examples/blob/master/colabs/intro/Intro_to_Weights_%26_Biases.ipynb):
+
+- [`handson_models.ipynb`](skills/wandb/hands-on/handson_models.ipynb): one run with config, metrics, summary, and a guarded scriptable alert.
+
+Weave, based on [hw-oh/weave-initial-course](https://github.com/hw-oh/weave-initial-course/tree/main/notebooks):
+
+- [`handson_weave.ipynb`](skills/wandb/hands-on/handson_weave.ipynb): a short `@weave.op` tracing walkthrough, Trace UI inspection, one simple tool-calling agent, and optional Codex integration.
+
 ## Official Platform Material
 
 VESSL's current repository collection includes the main [VESSL Cloud cookbook](https://github.com/vessl-ai/vessl-cloud-cookbook), [Gemma 4 fine-tuning](https://github.com/vessl-ai/vessl-cloud-cookbook/tree/main/gemma4-finetuning), [GPU cost benchmark](https://github.com/vessl-ai/vessl-cloud-cookbook/tree/main/gpu-cost-benchmark), [AQR finance](https://github.com/vessl-ai/vessl-cloud-cookbook/tree/main/aqr-finance), and the [recipe template](https://github.com/vessl-ai/vessl-cloud-cookbook/tree/main/_template). See the skill's [curated current/legacy map](skills/vessl-cloud-onboarding/references/official-repositories.md). Older `vessl-ai/examples` and `vessl-training-recipes` repositories are reference-only, not the current Cloud execution source.
 
-W&B does not maintain one repository literally named “cookbook.” Its official equivalents are the [documentation source](https://github.com/wandb/docs), [agent skills](https://github.com/wandb/skills), [examples](https://github.com/wandb/examples), [education](https://github.com/wandb/edu), [Artifacts examples](https://github.com/wandb/artifacts-examples), [Launch Jobs](https://github.com/wandb/launch-jobs), and [Sweeps](https://github.com/wandb/sweeps). The optional [ARIA autoresearch](https://docs.wandb.ai/aria/autoresearch) surface may analyze an approved synced run, but VESSL remains the scheduler. See the [W&B ecosystem map](skills/wandb-onboarding/references/official-ecosystem.md) for what this plugin uses and deliberately excludes.
+W&B does not maintain one repository literally named "cookbook." Its official equivalents are the [documentation source](https://github.com/wandb/docs), [agent skills](https://github.com/wandb/skills), [examples](https://github.com/wandb/examples), [education](https://github.com/wandb/edu), [Artifacts examples](https://github.com/wandb/artifacts-examples), [Launch Jobs](https://github.com/wandb/launch-jobs), and [Sweeps](https://github.com/wandb/sweeps). The optional [ARIA autoresearch](https://docs.wandb.ai/aria/autoresearch) surface may analyze an approved synced run, but VESSL remains the scheduler. See the [W&B ecosystem map](skills/wandb-onboarding/references/official-ecosystem.md) for what this plugin uses and deliberately excludes.
 
 ## Public Event Facts
 
 - Luma: <https://luma.com/hjuo7auc>
 - Title: `Ralphthon @ICML "Auto Research" supported by Codex`
 - Venue: `NAVER D2SF 강남`, 서울 서초구 서초대로74길 14 삼성화재 서초타워 18층
-- Track 1: AI Scientist agent plus a 2–4 page workshop-style short paper and self-review.
+- Track 1: AI Scientist agent plus a 2-4 page workshop-style short paper and self-review.
 - Track 2: Review Agent plus an ICML-style structured review of a Track 1 paper.
-- Ralph Loop: 12:30–15:30.
-- Human editing and final paper/agent submission: 15:30–16:30.
+- Ralph Loop: 12:30-15:30.
+- Human editing and final paper/agent submission: 15:30-16:30.
 - The final paper/agent hard cut is 16:30; peer and self-review follow.
 
 Verify live attendee-visible facts before publishing event copy.
@@ -112,7 +138,7 @@ Validation passed
 Validate an individual skill with the skill-creator helper:
 
 ```bash
-uv run --with pyyaml ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/<skill-name>
+uv run --with pyyaml ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/wandb/<skill-name>
 ```
 
 ## Continue on Another Mac
